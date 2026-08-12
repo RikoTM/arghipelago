@@ -3,6 +3,7 @@ import type {
   Actor,
   CaptainConfig,
   CrewOrder,
+  EnemyAttribute,
   EnemyType,
   GameState,
   LevelId,
@@ -79,6 +80,22 @@ const ENEMY_NAMES: Record<EnemyType, string[]> = {
   slag: ["Smouldering Slag", "Bilge Slag", "Sulky Slag"],
   bonegunner: ["Skeleton Fusilier", "Dead-Eye Dead Ned", "Powder-Dry Corpse"],
 };
+
+const ATTRIBUTE_NAMES: Record<EnemyAttribute, string> = {
+  keenEared: "Keen-Eared",
+  ironclad: "Ironclad",
+  skirmishing: "Skirmishing",
+  riposting: "Riposting",
+};
+
+const ATTRIBUTE_COMPATIBILITY: Record<EnemyAttribute, EnemyType[]> = {
+  keenEared: ["skeleton", "slag", "bonegunner"],
+  ironclad: ["skeleton", "crab", "slag", "bonegunner"],
+  skirmishing: ["skeleton", "crab", "slag"],
+  riposting: ["skeleton", "crab", "bonegunner"],
+};
+
+const ENEMY_ATTRIBUTES = Object.keys(ATTRIBUTE_NAMES) as EnemyAttribute[];
 
 export interface MapInspection {
   visibility: "unexplored" | "remembered" | "visible";
@@ -255,6 +272,7 @@ function makeEnemy(id: number, type: EnemyType, point: Point, rng: Rng, level: L
     level,
     kind: "enemy",
     enemyType: type,
+    enemyAttribute: null,
     name: names[rng.int(names.length)] ?? "Unnamed Menace",
     x: point.x,
     y: point.y,
@@ -265,6 +283,44 @@ function makeEnemy(id: number, type: EnemyType, point: Point, rng: Rng, level: L
     incapacitatedTurns: 0,
     enemyAwareness: null,
   };
+}
+
+export function isAttributeCompatible(attribute: EnemyAttribute, type: EnemyType): boolean {
+  return ATTRIBUTE_COMPATIBILITY[attribute].includes(type);
+}
+
+function assignEnemyAttribute(enemy: Actor, rng: Rng): void {
+  if (enemy.kind !== "enemy" || !enemy.enemyType || enemy.enemyAttribute) return;
+  const compatible = ENEMY_ATTRIBUTES.filter((attribute) => isAttributeCompatible(attribute, enemy.enemyType as EnemyType));
+  const attribute = compatible[rng.int(compatible.length)];
+  if (!attribute) return;
+  enemy.enemyAttribute = attribute;
+  enemy.name = `${ATTRIBUTE_NAMES[attribute]} ${enemy.name}`;
+}
+
+function assignInitialSpecials(seed: string, actors: Actor[], wreck: Point, caveExit: Point): void {
+  const surfaceCandidates = actors
+    .filter(
+      (actor) =>
+        actor.kind === "enemy" &&
+        actor.level === "surface" &&
+        distance(actor, wreck) > 12,
+    )
+    .sort((a, b) => a.id - b.id);
+  const surfaceRng = new Rng(`${seed}:special:surface`);
+  const surfaceEnemy = surfaceCandidates[surfaceRng.int(surfaceCandidates.length)];
+  if (surfaceEnemy) assignEnemyAttribute(surfaceEnemy, surfaceRng);
+
+  const caveEnemies = actors
+    .filter((actor) => actor.kind === "enemy" && actor.level === "cave")
+    .sort((a, b) => a.id - b.id);
+  const distantCaveEnemies = caveEnemies.filter((actor) => distance(actor, caveExit) > 9);
+  const caveCandidates = distantCaveEnemies.length > 0
+    ? distantCaveEnemies
+    : [...caveEnemies].sort((a, b) => distance(b, caveExit) - distance(a, caveExit) || a.id - b.id);
+  const caveRng = new Rng(`${seed}:special:cave`);
+  const caveEnemy = caveCandidates[caveRng.int(caveCandidates.length)];
+  if (caveEnemy) assignEnemyAttribute(caveEnemy, caveRng);
 }
 
 export function createGame(config: CaptainConfig, seed: string): GameState {
@@ -283,6 +339,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       id: 1,
       level: "surface",
       kind: "captain",
+      enemyAttribute: null,
       name: config.name,
       x: island.wreck.x,
       y: island.wreck.y,
@@ -303,6 +360,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       id: nextId,
       level: "surface",
       kind: "castaway",
+      enemyAttribute: null,
       name: recruit.name,
       role: recruit.role,
       x: point.x,
@@ -360,9 +418,10 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
     actors.push(makeEnemy(nextId, type, point, rng, "cave"));
     nextId += 1;
   }
+  assignInitialSpecials(seed, actors, island.wreck, cave.exit);
 
   const state: GameState = {
-    version: 7,
+    version: 8,
     seed,
     rngState: rng.state,
     levels: {
@@ -458,6 +517,15 @@ function meleeAttack(state: GameState, attacker: Actor, target: Actor, rng: Rng,
   const damage = base + duelistBonus + luckyBonus;
   if (luckyBonus > 0) addMessage(state, "A fortunate wobble improves the captain's attack.");
   damageActor(state, target, damage, attacker.name, sounds);
+  if (
+    target.alive &&
+    target.kind === "enemy" &&
+    target.enemyAttribute === "riposting" &&
+    canAct(attacker) &&
+    distance(attacker, target) <= 1
+  ) {
+    damageActor(state, attacker, 1, `${target.name}'s riposte`, sounds);
+  }
 }
 
 function collectAtCaptain(state: GameState): void {
@@ -647,7 +715,7 @@ function resolveSounds(state: GameState, sounds: SoundEvent[]): void {
         enemy.kind !== "enemy" ||
         enemy.id === sound.sourceActorId ||
         enemy.level !== sound.level ||
-        distance(enemy, sound.origin) > sound.radius
+        distance(enemy, sound.origin) > sound.radius + (enemy.enemyAttribute === "keenEared" ? 3 : 0)
       ) continue;
       const seen = enemy.level === state.currentLevel ? seenPartyTarget(state, enemy) : null;
       if (seen) rememberParty(state, enemy, seen);
@@ -696,6 +764,10 @@ function runEnemyTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
     if (distance(enemy, target) <= 1) {
       meleeAttack(state, enemy, target, rng, sounds);
       if (state.phase !== "playing") return;
+      if (enemy.alive && enemy.enemyAttribute === "skirmishing") {
+        const retreat = bestStepAway(state, enemy, target);
+        if (retreat) tryMoveActor(state, enemy, retreat.x, retreat.y);
+      }
       continue;
     }
 
@@ -746,6 +818,8 @@ function spawnEscalation(state: GameState, rng: Rng): void {
   const type = types[rng.int(types.length)] ?? "skeleton";
   const nextId = Math.max(...state.actors.map((actor) => actor.id), ...state.pickups.map((pickup) => pickup.id)) + 1;
   const enemy = makeEnemy(nextId, type, point, rng, state.currentLevel);
+  const specialRng = new Rng(`${state.seed}:special:${state.currentLevel}:${state.dangerLevel}:${enemy.id}`);
+  if (specialRng.int(8) === 0) assignEnemyAttribute(enemy, specialRng);
   state.actors.push(enemy);
 }
 
@@ -967,7 +1041,10 @@ export function fireFlintlock(state: GameState): boolean {
   state.inventory.loaded = false;
   const accuracy = state.captainConfig.knack === "deadeye" ? 0.95 : state.captainConfig.knack === "lucky" ? 0.85 : 0.78;
   if (rng.chance(accuracy)) {
-    damageActor(state, target, 5 + rng.int(3), player.name, sounds);
+    const rolledDamage = 5 + rng.int(3);
+    const damage = target.enemyAttribute === "ironclad" ? Math.max(1, rolledDamage - 2) : rolledDamage;
+    if (target.enemyAttribute === "ironclad") addMessage(state, `${target.name}'s iron plating absorbs part of the shot.`);
+    damageActor(state, target, damage, player.name, sounds);
   } else {
     addMessage(state, `${player.name} fires and decisively defeats some foliage.`);
   }

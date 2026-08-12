@@ -28,6 +28,7 @@ import type {
   Background,
   CaptainConfig,
   Coat,
+  EnemyAttribute,
   EnemyType,
   GameState,
   Knack,
@@ -38,7 +39,7 @@ import type {
 } from "./game/types";
 import { createRenderer, getMapCamera, moveInspectionCursor, worldPointFromClient } from "./render";
 
-const SAVE_KEY = "arghipelago.active-run.v7";
+const SAVE_KEY = "arghipelago.active-run.v8";
 
 function requireElement<T extends HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -110,6 +111,13 @@ const ENEMY_TACTICS: Record<EnemyType, string> = {
   bonegunner: "a ranged attacker that retreats from close combat",
 };
 
+const ENEMY_ATTRIBUTE_DETAILS: Record<EnemyAttribute, string> = {
+  keenEared: "special: keen-eared, hears noise three tiles farther",
+  ironclad: "special: ironclad, reduces firearm damage by two",
+  skirmishing: "special: skirmishing, retreats after a melee attack",
+  riposting: "special: riposting, retaliates after surviving melee damage",
+};
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>'"]/g, (character) => {
     const entities: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" };
@@ -132,7 +140,7 @@ function loadSave(): GameState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GameState>;
     if (
-      parsed.version !== 7 ||
+      parsed.version !== 8 ||
       !parsed.levels?.surface ||
       !parsed.levels.cave ||
       !Array.isArray(parsed.actors) ||
@@ -144,6 +152,9 @@ function loadSave(): GameState | null {
           (actor.incapacitatedTurns > 0 && (actor.kind !== "crew" || !actor.alive || actor.hp !== 0)) ||
           (actor.kind === "crew" && actor.alive && actor.hp === 0 && actor.incapacitatedTurns === 0) ||
           (actor.kind !== "enemy" && actor.enemyAwareness !== null) ||
+          (actor.kind !== "enemy" && actor.enemyAttribute !== null) ||
+          (actor.enemyAttribute !== null &&
+            !["keenEared", "ironclad", "skirmishing", "riposting"].includes(actor.enemyAttribute)) ||
           (actor.enemyAwareness !== null &&
             (actor.enemyAwareness.mode !== "investigating" && actor.enemyAwareness.mode !== "pursuing" ||
               !Number.isInteger(actor.enemyAwareness.lastKnownPosition.x) ||
@@ -202,7 +213,8 @@ function inspectionDescription(result: MapInspection): string {
       const behavior = awareness
         ? `${awareness.mode} ${awareness.lastKnownPosition.x},${awareness.lastKnownPosition.y} until turn ${awareness.expiresAtTurn}`
         : "unaware";
-      details.push(`${actor.name}, ${behavior}, ${actor.hp}/${actor.maxHp} vigor, ${tactic}`);
+      const attribute = actor.enemyAttribute ? `, ${ENEMY_ATTRIBUTE_DETAILS[actor.enemyAttribute]}` : "";
+      details.push(`${actor.name}, ${behavior}, ${actor.hp}/${actor.maxHp} vigor, ${tactic}${attribute}`);
     }
   }
   for (const pickup of result.pickups) details.push(`${PICKUP_DETAILS[pickup.type]} here`);

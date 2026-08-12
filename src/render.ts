@@ -444,6 +444,19 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
         );
       }
       context.drawImage(sprite(actorSprite(actor), state.captainConfig.coat), screenX, screenY);
+      if (actor.kind === "enemy" && actor.enemyAttribute) {
+        context.fillStyle = PAPER;
+        context.strokeStyle = INK;
+        context.lineWidth = 2;
+        context.beginPath();
+        context.moveTo(screenX + 26, screenY + 3);
+        context.lineTo(screenX + 30, screenY + 7);
+        context.lineTo(screenX + 26, screenY + 11);
+        context.lineTo(screenX + 22, screenY + 7);
+        context.closePath();
+        context.fill();
+        context.stroke();
+      }
       if (actor.hp < actor.maxHp) {
         context.fillStyle = "#2e302b";
         context.fillRect(screenX + 4, screenY + 1, 24, 3);

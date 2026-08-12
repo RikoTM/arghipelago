@@ -9,6 +9,7 @@ import {
   getRunSummary,
   inspectMapPoint,
   interact,
+  isAttributeCompatible,
   makeDistraction,
   moveCaptain,
   updateVisibility,
@@ -17,7 +18,7 @@ import {
   visibleEnemies,
   waitTurn,
 } from "./game";
-import type { Actor, CaptainConfig, Point } from "./types";
+import type { Actor, CaptainConfig, EnemyAttribute, Point } from "./types";
 import { generateCave, generateIsland, isPassableTerrain, tileIndex } from "./world";
 
 const captain: CaptainConfig = {
@@ -114,7 +115,7 @@ describe("game simulation", () => {
   it("round-trips the complete active run through JSON storage", () => {
     const state = createGame(captain, "save-round-trip");
     const restored = JSON.parse(JSON.stringify(state)) as typeof state;
-    expect(restored.version).toBe(7);
+    expect(restored.version).toBe(8);
     expect(restored).toEqual(state);
     expect(restored.levels.cave.tiles).toHaveLength(state.levels.cave.width * state.levels.cave.height);
   });
@@ -502,6 +503,41 @@ describe("game simulation", () => {
     expect(surfaceEnemies.map((enemy) => ({ id: enemy.id, x: enemy.x, y: enemy.y }))).toEqual(initialPositions);
   });
 
+  it("generates one compatible distant special enemy on each initial level", () => {
+    const seenAttributes = new Set<EnemyAttribute>();
+    for (let index = 0; index < 100; index += 1) {
+      const state = createGame(captain, `special-generation-${index}`);
+      const surfaceSpecials = state.actors.filter(
+        (actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyAttribute,
+      );
+      const caveSpecials = state.actors.filter(
+        (actor) => actor.kind === "enemy" && actor.level === "cave" && actor.enemyAttribute,
+      );
+      expect(surfaceSpecials).toHaveLength(1);
+      expect(caveSpecials).toHaveLength(1);
+      for (const enemy of [...surfaceSpecials, ...caveSpecials]) {
+        expect(enemy.enemyType).toBeDefined();
+        expect(enemy.enemyAttribute).toBeDefined();
+        if (!enemy.enemyType || !enemy.enemyAttribute) continue;
+        expect(isAttributeCompatible(enemy.enemyAttribute, enemy.enemyType)).toBe(true);
+        expect(["Keen-Eared", "Ironclad", "Skirmishing", "Riposting"].some((prefix) => enemy.name.startsWith(prefix))).toBe(true);
+        seenAttributes.add(enemy.enemyAttribute);
+      }
+      const closeEnemy = state.actors
+        .filter((actor) => actor.kind === "enemy" && actor.level === "surface")
+        .sort((a, b) => a.id - b.id)[0];
+      expect(closeEnemy?.enemyAttribute).toBeNull();
+    }
+    expect(seenAttributes).toEqual(new Set(["keenEared", "ironclad", "skirmishing", "riposting"]));
+  });
+
+  it("assigns special enemies deterministically without changing ordinary generation", () => {
+    const first = createGame(captain, "repeatable-specials");
+    const second = createGame(captain, "repeatable-specials");
+    expect(first).toEqual(second);
+    expect(first.actors.filter((actor) => actor.enemyAttribute)).toHaveLength(2);
+  });
+
   it("makes enemies investigate the location of a deliberate noise", () => {
     const state = createGame(captain, "spatial-distraction");
     const player = getCaptain(state);
@@ -527,6 +563,129 @@ describe("game simulation", () => {
     });
     expect(enemy).toMatchObject({ x: 25, y: 19 });
     expect(state.turn).toBe(1);
+  });
+
+  it("lets keen-eared specials hear beyond the ordinary sound radius", () => {
+    const state = createGame(captain, "keen-hearing");
+    const player = getCaptain(state);
+    const enemies = state.actors.filter(
+      (actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType === "skeleton",
+    ).slice(0, 2);
+    const keen = enemies[0];
+    const ordinary = enemies[1];
+    expect(keen).toBeDefined();
+    expect(ordinary).toBeDefined();
+    if (!keen || !ordinary) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && !enemies.includes(actor)).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    keen.x = 28;
+    keen.y = 20;
+    keen.enemyAttribute = "keenEared";
+    keen.enemyAwareness = null;
+    ordinary.x = 20;
+    ordinary.y = 28;
+    ordinary.enemyAttribute = null;
+    ordinary.enemyAwareness = null;
+
+    makeDistraction(state);
+
+    expect(keen.enemyAwareness).toMatchObject({ mode: "investigating" });
+    expect(ordinary.enemyAwareness).toBeNull();
+  });
+
+  it("has ironclad enemies reduce firearm damage", () => {
+    const ordinaryState = createGame({ ...captain, knack: "deadeye" }, "ironclad-shot");
+    const armoredState = createGame({ ...captain, knack: "deadeye" }, "ironclad-shot");
+    const prepare = (state: ReturnType<typeof createGame>, attribute: EnemyAttribute | null): Actor | null => {
+      const player = getCaptain(state);
+      const target = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType !== "crab");
+      if (!target) return null;
+      state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== target.id).forEach((actor) => {
+        actor.alive = false;
+      });
+      for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+      player.x = 20;
+      player.y = 20;
+      target.x = 22;
+      target.y = 20;
+      target.hp = 20;
+      target.maxHp = 20;
+      target.enemyAttribute = attribute;
+      state.rngState = 1;
+      state.targetId = target.id;
+      updateVisibility(state);
+      return target;
+    };
+    const ordinary = prepare(ordinaryState, null);
+    const armored = prepare(armoredState, "ironclad");
+    expect(ordinary).not.toBeNull();
+    expect(armored).not.toBeNull();
+    if (!ordinary || !armored) return;
+
+    expect(fireFlintlock(ordinaryState)).toBe(true);
+    expect(fireFlintlock(armoredState)).toBe(true);
+
+    expect(armored.hp - ordinary.hp).toBe(2);
+    expect(armoredState.messages.some((message) => message.includes("iron plating"))).toBe(true);
+  });
+
+  it("has riposting enemies retaliate after surviving melee damage", () => {
+    const ordinaryState = createGame(captain, "riposte-comparison");
+    const riposteState = createGame(captain, "riposte-comparison");
+    const prepare = (state: ReturnType<typeof createGame>, attribute: EnemyAttribute | null): void => {
+      const player = getCaptain(state);
+      const target = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType !== "crab");
+      if (!target) return;
+      state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== target.id).forEach((actor) => {
+        actor.alive = false;
+      });
+      for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+      player.x = 20;
+      player.y = 20;
+      target.x = 21;
+      target.y = 20;
+      target.hp = 20;
+      target.maxHp = 20;
+      target.enemyAttribute = attribute;
+      pursue(target, player);
+      state.rngState = 1;
+    };
+    prepare(ordinaryState, null);
+    prepare(riposteState, "riposting");
+
+    expect(moveCaptain(ordinaryState, 1, 0)).toBe(true);
+    expect(moveCaptain(riposteState, 1, 0)).toBe(true);
+
+    expect(getCaptain(riposteState).hp).toBe(getCaptain(ordinaryState).hp - 1);
+    expect(riposteState.messages.some((message) => message.includes("riposte"))).toBe(true);
+  });
+
+  it("has skirmishing enemies retreat after making a melee attack", () => {
+    const state = createGame(captain, "skirmisher-retreat");
+    const player = getCaptain(state);
+    const enemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType === "skeleton");
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== enemy.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    enemy.x = 21;
+    enemy.y = 20;
+    enemy.enemyAttribute = "skirmishing";
+    pursue(enemy, player);
+    const health = player.hp;
+
+    waitTurn(state);
+
+    expect(player.hp).toBeLessThan(health);
+    expect(Math.max(Math.abs(enemy.x - player.x), Math.abs(enemy.y - player.y))).toBe(2);
   });
 
   it("does not let investigation track the captain's later movement", () => {

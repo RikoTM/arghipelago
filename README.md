@@ -8,6 +8,7 @@ The first playable prototype includes:
 - Eight-direction turn-based movement and melee bump attacks.
 - A flintlock with targeting, noise, ammunition, and reloading.
 - Three recruitable crew members with follow, hold, and rally orders.
+- Deterministic special enemies with distinct reactive attributes.
 - A procedurally generated cave containing a required repair objective.
 - Escalating danger, repair objectives, victory, permadeath, and conditional rescue.
 - Keyboard and touch controls.

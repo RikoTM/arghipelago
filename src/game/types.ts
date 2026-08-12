@@ -12,6 +12,7 @@ export type Terrain =
 
 export type ActorKind = "captain" | "crew" | "castaway" | "enemy";
 export type EnemyType = "skeleton" | "crab" | "slag" | "bonegunner";
+export type EnemyAttribute = "keenEared" | "ironclad" | "skirmishing" | "riposting";
 export type EnemyAwarenessMode = "investigating" | "pursuing";
 export type LevelId = "surface" | "cave";
 export type CrewOrder = "follow" | "hold" | "rally" | "attack";
@@ -60,6 +61,7 @@ export interface Actor extends Point {
   name: string;
   role?: string;
   enemyType?: EnemyType;
+  enemyAttribute: EnemyAttribute | null;
   hp: number;
   maxHp: number;
   melee: number;
@@ -82,7 +84,7 @@ export interface Inventory {
 }
 
 export interface GameState {
-  version: 7;
+  version: 8;
   seed: string;
   rngState: number;
   levels: Record<LevelId, MapLevel>;
