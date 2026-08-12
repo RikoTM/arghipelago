@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+    <meta name="theme-color" content="#101b1b" />
+    <meta
+      name="description"
+      content="Arghipelago, a turn-based pirate roguelike about shipwrecks, skeletons, and questionable leadership."
+    />
+    <title>Arghipelago: A Pirate Roguelike</title>
+  </head>
+  <body>
+    <main id="app">
+      <header class="masthead">
+        <div>
+          <p class="eyebrow">A traditional pirate roguelike</p>
+          <h1>ARGHIPELAGO</h1>
+        </div>
+        <p class="subtitle">Shipwrecked. Outnumbered. Mildly damp.</p>
+      </header>
+
+      <section id="setup-screen" class="setup-screen" aria-labelledby="setup-title">
+        <div class="chart-card">
+          <p class="chapter">Chapter the First</p>
+          <h2 id="setup-title">The regrettable beaching</h2>
+          <p>
+            Your ship has encountered an island with unusual enthusiasm. Choose the captain
+            responsible for explaining this to the crew, should you find any of them.
+          </p>
+          <form id="captain-form">
+            <label>
+              Captain's name
+              <input id="captain-name" name="name" value="Morgan Haddock" maxlength="28" required />
+            </label>
+            <div class="form-grid">
+              <label>
+                Former occupation
+                <select id="captain-background" name="background">
+                  <option value="privateer">Privateer (+2 health)</option>
+                  <option value="navigator">Navigator (+2 sight)</option>
+                  <option value="surgeon">Surgeon (better rescue)</option>
+                </select>
+              </label>
+              <label>
+                Defining knack
+                <select id="captain-knack" name="knack">
+                  <option value="duelist">Duelist (+1 melee)</option>
+                  <option value="deadeye">Deadeye (steadier shots)</option>
+                  <option value="lucky">Unreasonably lucky</option>
+                </select>
+              </label>
+              <label>
+                Coat
+                <select id="captain-coat" name="coat">
+                  <option value="crimson">Crimson</option>
+                  <option value="navy">Navy</option>
+                  <option value="moss">Moss green</option>
+                </select>
+              </label>
+              <label>
+                Island seed
+                <input id="world-seed" name="seed" maxlength="32" autocomplete="off" />
+              </label>
+            </div>
+            <div class="setup-actions">
+              <button class="primary" type="submit">Wash ashore</button>
+              <button id="continue-button" class="secondary" type="button" hidden>Continue voyage</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section id="game-screen" class="game-screen" hidden aria-label="Arghipelago game">
+        <div class="map-column">
+          <div class="map-frame">
+            <canvas id="game-map" width="640" height="416" aria-label="Game map"></canvas>
+            <div id="phase-banner" class="phase-banner" hidden></div>
+          </div>
+          <div id="touch-controls" class="touch-controls" aria-label="Touch controls">
+            <div class="dpad" aria-label="Movement">
+              <button data-move="-1,-1" aria-label="Move northwest">&#8598;</button>
+              <button data-move="0,-1" aria-label="Move north">&#8593;</button>
+              <button data-move="1,-1" aria-label="Move northeast">&#8599;</button>
+              <button data-move="-1,0" aria-label="Move west">&#8592;</button>
+              <button data-action="wait" aria-label="Wait">&#183;</button>
+              <button data-move="1,0" aria-label="Move east">&#8594;</button>
+              <button data-move="-1,1" aria-label="Move southwest">&#8601;</button>
+              <button data-move="0,1" aria-label="Move south">&#8595;</button>
+              <button data-move="1,1" aria-label="Move southeast">&#8600;</button>
+            </div>
+            <div class="action-pad">
+              <button id="fire-button" data-action="fire">Aim flintlock</button>
+              <button data-action="reload">Reload</button>
+              <button data-action="target-next">Next target</button>
+              <button id="context-button" data-action="stairs">Use stairs</button>
+              <button data-action="order">Crew order</button>
+            </div>
+          </div>
+        </div>
+
+        <aside class="ship-log">
+          <section class="status-panel torn-panel">
+            <div class="panel-heading">
+              <h2 id="captain-heading">Captain</h2>
+              <span id="turn-count">Turn 0</span>
+            </div>
+            <div id="captain-stats"></div>
+          </section>
+
+          <section class="objective-panel torn-panel">
+            <div class="panel-heading">
+              <h2>Repairs</h2>
+              <span id="danger-level">Quiet-ish</span>
+            </div>
+            <div id="repair-list"></div>
+          </section>
+
+          <section class="crew-panel torn-panel">
+            <div class="panel-heading">
+              <h2>Crew</h2>
+              <span id="crew-order">Follow</span>
+            </div>
+            <div id="crew-list"><p>Currently between crews.</p></div>
+          </section>
+
+          <section class="message-panel">
+            <h2>Captain's log</h2>
+            <div id="message-log" role="log" aria-live="polite"></div>
+          </section>
+
+          <details class="controls-help">
+            <summary>Controls</summary>
+            <p><kbd>Arrows</kbd> / <kbd>HJKL</kbd> move, diagonals use <kbd>YUBN</kbd>.</p>
+            <p><kbd>.</kbd> waits, <kbd>F</kbd> aims, <kbd>R</kbd> reloads, <kbd>&gt;</kbd> uses stairs.</p>
+            <p><kbd>Tab</kbd> changes target. <kbd>Enter</kbd> fires. <kbd>C</kbd> changes crew order.</p>
+          </details>
+
+          <button id="new-run-button" class="text-button" type="button">Abandon this entirely</button>
+        </aside>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

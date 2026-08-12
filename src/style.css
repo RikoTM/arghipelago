@@ -1,0 +1,602 @@
+:root {
+  color: #1d2420;
+  background: #111a18;
+  font-family: "IM Fell English", Georgia, serif;
+  font-synthesis: none;
+  --ink: #1d2420;
+  --paper: #d8caa9;
+  --paper-dark: #a7997c;
+  --red: #783d35;
+  --sea: #4c6261;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: #111a18;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at 13% 17%, rgb(255 255 255 / 4%) 0 1px, transparent 2px),
+    radial-gradient(circle at 81% 43%, rgb(255 255 255 / 3%) 0 1px, transparent 2px),
+    repeating-linear-gradient(115deg, rgb(255 255 255 / 1%) 0 1px, transparent 1px 9px),
+    #111a18;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 3px solid #b17a59;
+  outline-offset: 2px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+#app {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 22px 0 40px;
+}
+
+.masthead {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  padding: 0 8px 18px;
+  color: #ddd0af;
+  border-bottom: 1px solid #8d8066;
+}
+
+.masthead h1 {
+  margin: -5px 0 0;
+  color: #e2d3ad;
+  font-family: "Pirata One", Georgia, serif;
+  font-size: clamp(2.8rem, 7vw, 5.2rem);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  line-height: 0.8;
+  text-shadow: 3px 3px 0 #413d32;
+}
+
+.eyebrow,
+.chapter {
+  margin: 0;
+  color: #b58a64;
+  font-family: "Special Elite", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.subtitle {
+  margin: 0;
+  color: #9d9279;
+  font-style: italic;
+}
+
+.setup-screen {
+  display: grid;
+  min-height: 620px;
+  place-items: center;
+  background:
+    linear-gradient(rgb(17 26 24 / 85%), rgb(17 26 24 / 85%)),
+    repeating-linear-gradient(20deg, transparent 0 12px, #56645e 13px, transparent 14px);
+}
+
+.chart-card {
+  position: relative;
+  width: min(720px, 100%);
+  padding: clamp(28px, 6vw, 64px);
+  background:
+    radial-gradient(circle at 18% 20%, rgb(81 64 40 / 9%) 0 1px, transparent 2px),
+    repeating-linear-gradient(8deg, transparent 0 14px, rgb(45 41 31 / 3%) 15px, transparent 16px),
+    var(--paper);
+  box-shadow: 0 24px 60px #0008;
+  clip-path: polygon(1% 1%, 18% 0, 39% 1%, 62% 0, 83% 1%, 99% 0, 100% 20%, 99% 43%, 100% 67%, 99% 100%, 78% 99%, 58% 100%, 33% 99%, 0 100%, 1% 73%, 0 49%, 1% 23%);
+}
+
+.chart-card::after {
+  position: absolute;
+  right: 30px;
+  bottom: 22px;
+  width: 98px;
+  height: 98px;
+  border: 2px solid rgb(120 61 53 / 40%);
+  border-radius: 50%;
+  content: "CAPTAIN\A APPROVED?";
+  color: rgb(120 61 53 / 58%);
+  font-family: "Special Elite", monospace;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  text-align: center;
+  white-space: pre;
+  transform: rotate(-12deg);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.chart-card h2 {
+  margin: 4px 0 12px;
+  font-family: "Pirata One", Georgia, serif;
+  font-size: clamp(2rem, 6vw, 3.7rem);
+  font-weight: 400;
+  line-height: 0.95;
+}
+
+.chart-card > p:not(.chapter) {
+  max-width: 560px;
+  font-size: 1.1rem;
+  line-height: 1.45;
+}
+
+form {
+  margin-top: 28px;
+}
+
+label {
+  display: grid;
+  gap: 5px;
+  font-family: "Special Elite", monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+input,
+select {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #645c4c;
+  border-radius: 0;
+  color: var(--ink);
+  background: rgb(237 224 190 / 55%);
+  font-family: "IM Fell English", Georgia, serif;
+  font-size: 1rem;
+  text-transform: none;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.setup-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.primary,
+.secondary {
+  min-height: 46px;
+  padding: 10px 20px;
+  border: 1px solid var(--ink);
+  font-family: "Special Elite", monospace;
+}
+
+.primary {
+  color: #e5d6b6;
+  background: var(--ink);
+}
+
+.secondary {
+  color: var(--ink);
+  background: transparent;
+}
+
+.game-screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(310px, 0.9fr);
+  gap: 24px;
+  padding-top: 24px;
+}
+
+.map-frame {
+  position: relative;
+  padding: 10px;
+  background: #7f745f;
+  box-shadow: 0 14px 34px #0008;
+}
+
+.map-frame::before {
+  position: absolute;
+  inset: 4px;
+  border: 1px dashed #242a26;
+  content: "";
+  pointer-events: none;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+  touch-action: none;
+}
+
+.phase-banner {
+  position: absolute;
+  inset: 30% 12%;
+  display: grid;
+  align-content: center;
+  padding: 20px;
+  border: 4px double var(--ink);
+  color: var(--ink);
+  background: rgb(216 202 169 / 94%);
+  text-align: center;
+  transform: rotate(-1deg);
+}
+
+.phase-banner strong {
+  font-family: "Pirata One", Georgia, serif;
+  font-size: clamp(2rem, 6vw, 4rem);
+  font-weight: 400;
+}
+
+.phase-banner span {
+  font-style: italic;
+}
+
+.ship-log {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.torn-panel,
+.message-panel,
+.controls-help {
+  padding: 16px;
+  color: var(--ink);
+  background:
+    repeating-linear-gradient(5deg, transparent 0 13px, rgb(54 49 37 / 3%) 14px, transparent 15px),
+    var(--paper);
+  box-shadow: 4px 5px 0 #0004;
+  clip-path: polygon(0 2%, 19% 0, 36% 2%, 57% 0, 76% 1%, 100% 0, 99% 25%, 100% 54%, 99% 100%, 72% 98%, 51% 100%, 28% 98%, 0 100%, 1% 70%);
+}
+
+.panel-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #756b57;
+}
+
+.panel-heading h2,
+.message-panel h2 {
+  margin: 0;
+  font-family: "Pirata One", Georgia, serif;
+  font-size: 1.55rem;
+  font-weight: 400;
+}
+
+.panel-heading span,
+.seed-line {
+  color: #625b4d;
+  font-family: "Special Elite", monospace;
+  font-size: 0.7rem;
+}
+
+.health-line,
+.equipment-line,
+.repair-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.health-line {
+  font-family: "Special Elite", monospace;
+  font-size: 0.72rem;
+}
+
+.health-line strong {
+  color: var(--red);
+  letter-spacing: 0.08em;
+}
+
+.equipment-line {
+  margin-top: 8px;
+}
+
+.seed-line {
+  margin-top: 9px;
+  overflow-wrap: anywhere;
+}
+
+.repair-row {
+  justify-content: start;
+  padding: 3px 0;
+}
+
+.repair-row.complete {
+  color: #53604c;
+  text-decoration: line-through;
+}
+
+.objective-hint {
+  margin: 8px 0 0;
+  padding-top: 7px;
+  border-top: 1px dotted #827762;
+  color: #625b4d;
+  font-size: 0.84rem;
+  font-style: italic;
+}
+
+.crew-panel p {
+  margin: 4px 0;
+  color: #625b4d;
+  font-style: italic;
+}
+
+.crew-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  padding: 5px 0;
+  border-bottom: 1px dotted #827762;
+}
+
+.crew-row span {
+  color: #625b4d;
+  font-size: 0.82rem;
+}
+
+.crew-row span:first-of-type {
+  grid-column: 1;
+}
+
+.crew-row span:last-child {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+}
+
+.message-panel {
+  min-height: 210px;
+  color: #ddd0af;
+  background: #202824;
+  clip-path: none;
+  box-shadow: inset 0 0 0 1px #6e6654, 4px 5px 0 #0004;
+}
+
+#message-log p {
+  margin: 8px 0 0;
+  color: #978f7b;
+  font-size: 0.88rem;
+  line-height: 1.25;
+}
+
+#message-log p.latest {
+  color: #e2d3ad;
+}
+
+.controls-help {
+  padding: 12px 16px;
+  clip-path: none;
+}
+
+.controls-help summary {
+  cursor: pointer;
+  font-family: "Special Elite", monospace;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.controls-help p {
+  margin: 9px 0 0;
+  font-size: 0.86rem;
+}
+
+kbd {
+  padding: 1px 4px;
+  border: 1px solid #766c57;
+  background: #c1b492;
+  font-family: "Special Elite", monospace;
+}
+
+.text-button {
+  justify-self: end;
+  padding: 4px;
+  border: 0;
+  color: #aaa087;
+  background: transparent;
+  font-size: 0.85rem;
+  text-decoration: underline;
+}
+
+.touch-controls {
+  display: none;
+  grid-template-columns: auto 1fr;
+  gap: 16px;
+  margin-top: 16px;
+  user-select: none;
+}
+
+.dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 48px);
+  grid-template-rows: repeat(3, 44px);
+}
+
+.dpad button,
+.action-pad button {
+  border: 1px solid #8c816a;
+  color: #e2d3ad;
+  background: #222b27;
+}
+
+.action-pad button.context-ready {
+  color: #202824;
+  background: #d8caa9;
+  box-shadow: inset 0 0 0 2px #766c57;
+}
+
+.dpad button {
+  font-size: 1.25rem;
+}
+
+.action-pad {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.action-pad button {
+  min-height: 42px;
+  padding: 7px;
+  font-family: "Special Elite", monospace;
+  font-size: 0.68rem;
+}
+
+@media (max-width: 900px), (pointer: coarse) {
+  .touch-controls {
+    display: grid;
+  }
+}
+
+@media (max-width: 820px) {
+  #app {
+    width: min(100% - 20px, 680px);
+    padding-top: 14px;
+  }
+
+  .masthead {
+    align-items: start;
+  }
+
+  .subtitle {
+    max-width: 130px;
+    text-align: right;
+  }
+
+  .game-screen {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .ship-log {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .message-panel,
+  .controls-help,
+  .text-button {
+    grid-column: 1 / -1;
+  }
+
+  .message-panel {
+    min-height: 170px;
+  }
+}
+
+@media (max-width: 560px) {
+  #app {
+    width: 100%;
+    padding: 12px 8px 30px;
+  }
+
+  .masthead {
+    padding-bottom: 14px;
+  }
+
+  .masthead h1 {
+    font-size: clamp(2.2rem, 13vw, 2.8rem);
+  }
+
+  .eyebrow {
+    font-size: 0.56rem;
+  }
+
+  .subtitle {
+    display: none;
+  }
+
+  .setup-screen {
+    min-height: 580px;
+    padding-top: 16px;
+  }
+
+  .chart-card {
+    padding: 30px 22px 44px;
+  }
+
+  .chart-card::after {
+    width: 72px;
+    height: 72px;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .setup-actions {
+    align-items: stretch;
+    flex-direction: column;
+    max-width: 230px;
+  }
+
+  .map-frame {
+    padding: 5px;
+  }
+
+  .touch-controls {
+    grid-template-columns: 132px 1fr;
+    gap: 8px;
+  }
+
+  .dpad {
+    grid-template-columns: repeat(3, 44px);
+    grid-template-rows: repeat(3, 44px);
+  }
+
+  .action-pad {
+    gap: 5px;
+  }
+
+  .ship-log {
+    grid-template-columns: 1fr;
+  }
+
+  .message-panel,
+  .controls-help,
+  .text-button {
+    grid-column: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}
