@@ -9,6 +9,7 @@ import {
   interact,
   moveCaptain,
   updateVisibility,
+  useSmellingSalts,
   useStairs,
   waitTurn,
 } from "./game";
@@ -204,6 +205,42 @@ describe("game simulation", () => {
     if (!blocked) return;
 
     expect(moveCaptain(state, blocked[0], blocked[1])).toBe(false);
+    expect(state.turn).toBe(0);
+  });
+
+  it("uses smelling salts to heal the captain at the cost of a turn", () => {
+    const state = createGame(captain, "medicinal-stench");
+    const player = getCaptain(state);
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    player.hp = player.maxHp - 6;
+
+    expect(useSmellingSalts(state)).toBe(true);
+    expect(player.hp).toBe(player.maxHp - 2);
+    expect(state.inventory.salts).toBe(0);
+    expect(state.turn).toBe(1);
+  });
+
+  it("gives surgeons stronger manual healing", () => {
+    const state = createGame({ ...captain, background: "surgeon" }, "surgeon-salts");
+    const player = getCaptain(state);
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    player.hp = player.maxHp - 8;
+
+    expect(useSmellingSalts(state)).toBe(true);
+    expect(player.hp).toBe(player.maxHp - 2);
+    expect(state.inventory.salts).toBe(1);
+  });
+
+  it("does not waste salts or turns when healing is unavailable", () => {
+    const state = createGame(captain, "responsible-medicine");
+
+    expect(useSmellingSalts(state)).toBe(false);
+    expect(state.inventory.salts).toBe(1);
+    expect(state.turn).toBe(0);
+
+    getCaptain(state).hp -= 1;
+    state.inventory.salts = 0;
+    expect(useSmellingSalts(state)).toBe(false);
     expect(state.turn).toBe(0);
   });
 

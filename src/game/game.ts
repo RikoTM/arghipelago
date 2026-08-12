@@ -627,6 +627,27 @@ export function reloadFlintlock(state: GameState): boolean {
   return true;
 }
 
+export function useSmellingSalts(state: GameState): boolean {
+  if (state.phase !== "playing") return false;
+  const player = captain(state);
+  if (player.hp >= player.maxHp) {
+    addMessage(state, "The captain is already offensively vigorous.");
+    return false;
+  }
+  if (state.inventory.salts <= 0) {
+    addMessage(state, "There are no smelling salts left, only the memory of alarming odors.");
+    return false;
+  }
+
+  const healing = state.captainConfig.background === "surgeon" ? 6 : 4;
+  const recovered = Math.min(healing, player.maxHp - player.hp);
+  state.inventory.salts -= 1;
+  player.hp += recovered;
+  addMessage(state, `The smelling salts restore ${recovered} vigor and several regrettable memories.`);
+  finishTurn(state);
+  return true;
+}
+
 export function visibleEnemies(state: GameState): Actor[] {
   const player = captain(state);
   const map = currentMap(state);

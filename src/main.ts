@@ -15,6 +15,7 @@ import {
   moveCaptain,
   reloadFlintlock,
   useStairs,
+  useSmellingSalts,
   waitTurn,
 } from "./game/game";
 import type { Background, CaptainConfig, Coat, GameState, Knack, RepairPart } from "./game/types";
@@ -199,6 +200,7 @@ function handleAction(action: string): void {
   if (!state) return;
   if (action === "wait") commitAction(() => waitTurn(state as GameState));
   else if (action === "reload") commitAction(() => reloadFlintlock(state as GameState));
+  else if (action === "salts") commitAction(() => useSmellingSalts(state as GameState));
   else if (action === "target-next") {
     cycleTarget(state);
     renderInterface();
@@ -285,6 +287,7 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     handleAction("wait");
   } else if (event.key.toLowerCase() === "r") handleAction("reload");
+  else if (event.key.toLowerCase() === "s") handleAction("salts");
   else if (event.key === ">" || event.key === "<") commitAction(() => useStairs(state as GameState));
   else if (event.key.toLowerCase() === "e") handleAction("interact");
   else if (event.key.toLowerCase() === "f") handleAction(state.targetId === null ? "target-next" : "fire");
