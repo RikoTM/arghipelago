@@ -6,6 +6,7 @@ import {
   fireFlintlock,
   getCaptain,
   getInteractionLabel,
+  getRunSummary,
   inspectMapPoint,
   interact,
   moveCaptain,
@@ -107,6 +108,33 @@ describe("game simulation", () => {
     expect(restored.version).toBe(6);
     expect(restored).toEqual(state);
     expect(restored.levels.cave.tiles).toHaveLength(state.levels.cave.width * state.levels.cave.height);
+  });
+
+  it("does not produce a run summary while play is active", () => {
+    expect(getRunSummary(createGame(captain, "unfinished-voyage"))).toBeNull();
+  });
+
+  it("summarizes terminal runs from simulation state", () => {
+    const state = createGame(captain, "voyage-summary");
+    const recruits = state.actors.filter((actor) => actor.kind === "castaway").slice(0, 2);
+    const defeated = state.actors.filter((actor) => actor.kind === "enemy").slice(0, 3);
+    for (const recruit of recruits) recruit.kind = "crew";
+    const casualty = recruits[1];
+    if (casualty) casualty.alive = false;
+    for (const enemy of defeated) enemy.alive = false;
+    state.repairs = { mast: true, canvas: true, pitch: false };
+    state.turn = 87;
+    state.phase = "lost";
+
+    expect(getRunSummary(state)).toEqual({
+      phase: "lost",
+      seed: "voyage-summary",
+      turns: 87,
+      installedRepairs: 2,
+      recruitedCrew: 2,
+      survivingCrew: 1,
+      defeatedEnemies: 3,
+    });
   });
 
   it("recovers repair cargo without installing it or granting victory", () => {

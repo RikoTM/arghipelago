@@ -271,7 +271,7 @@ canvas:focus-visible {
 
 .phase-banner {
   position: absolute;
-  inset: 30% 12%;
+  inset: 7% 9%;
   display: grid;
   align-content: center;
   padding: 20px;
@@ -290,6 +290,43 @@ canvas:focus-visible {
 
 .phase-banner span {
   font-style: italic;
+}
+
+.run-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 14px;
+  margin: 14px 0;
+  text-align: left;
+}
+
+.run-summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px dotted #766c57;
+}
+
+.run-summary dt {
+  font-family: "Special Elite", monospace;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.run-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.summary-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.summary-actions button {
+  min-height: 40px;
+  padding: 7px 12px;
 }
 
 .ship-log {

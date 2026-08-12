@@ -82,7 +82,21 @@
               aria-label="Game map"
               aria-describedby="inspection-readout"
             ></canvas>
-            <div id="phase-banner" class="phase-banner" hidden></div>
+            <section id="phase-banner" class="phase-banner" aria-labelledby="summary-title" hidden>
+              <strong id="summary-title"></strong>
+              <span id="summary-outcome"></span>
+              <dl class="run-summary">
+                <div><dt>Chart</dt><dd id="summary-seed"></dd></div>
+                <div><dt>Turns</dt><dd id="summary-turns"></dd></div>
+                <div><dt>Repairs</dt><dd id="summary-repairs"></dd></div>
+                <div><dt>Crew</dt><dd id="summary-crew"></dd></div>
+                <div><dt>Enemies</dt><dd id="summary-enemies"></dd></div>
+              </dl>
+              <div class="summary-actions">
+                <button id="retry-run-button" class="primary" type="button">Retry this chart</button>
+                <button id="new-captain-button" class="secondary" type="button">New captain</button>
+              </div>
+            </section>
           </div>
           <div id="inspection-readout" class="inspection-readout" role="status" aria-live="polite" aria-atomic="true" hidden>
             <strong id="inspection-title"></strong>

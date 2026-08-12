@@ -12,6 +12,7 @@ import {
   getCaptain,
   getCurrentMap,
   getInteractionLabel,
+  getRunSummary,
   inspectMapPoint,
   interact,
   isIncapacitated,
@@ -59,6 +60,15 @@ const crewList = requireElement<HTMLElement>("#crew-list");
 const crewOrder = requireElement<HTMLElement>("#crew-order");
 const messageLog = requireElement<HTMLElement>("#message-log");
 const phaseBanner = requireElement<HTMLElement>("#phase-banner");
+const summaryTitle = requireElement<HTMLElement>("#summary-title");
+const summaryOutcome = requireElement<HTMLElement>("#summary-outcome");
+const summarySeed = requireElement<HTMLElement>("#summary-seed");
+const summaryTurns = requireElement<HTMLElement>("#summary-turns");
+const summaryRepairs = requireElement<HTMLElement>("#summary-repairs");
+const summaryCrew = requireElement<HTMLElement>("#summary-crew");
+const summaryEnemies = requireElement<HTMLElement>("#summary-enemies");
+const retryRunButton = requireElement<HTMLButtonElement>("#retry-run-button");
+const newCaptainButton = requireElement<HTMLButtonElement>("#new-captain-button");
 const fireButton = requireElement<HTMLButtonElement>("#fire-button");
 const crewAttackButton = requireElement<HTMLButtonElement>("#crew-attack-button");
 const contextButton = requireElement<HTMLButtonElement>("#context-button");
@@ -291,11 +301,17 @@ function renderInterface(): void {
   }
   renderInspection();
   phaseBanner.hidden = state.phase === "playing";
-  if (state.phase !== "playing") {
-    phaseBanner.innerHTML =
-      state.phase === "won"
-        ? `<strong>SHIPSHAPE-ISH!</strong><span>You escape on turn ${state.turn}. The island files a complaint.</span>`
-        : `<strong>CAPTAIN DECEASED</strong><span>The voyage ends on turn ${state.turn}. Very inconsiderate.</span>`;
+  const summary = getRunSummary(state);
+  if (summary) {
+    summaryTitle.textContent = summary.phase === "won" ? "SHIPSHAPE-ISH!" : "CAPTAIN DECEASED";
+    summaryOutcome.textContent = summary.phase === "won"
+      ? "The island files a formal complaint as your ship escapes."
+      : "The voyage ends. The island declines to apologize.";
+    summarySeed.textContent = summary.seed;
+    summaryTurns.textContent = String(summary.turns);
+    summaryRepairs.textContent = `${summary.installedRepairs}/3 installed`;
+    summaryCrew.textContent = `${summary.survivingCrew}/${summary.recruitedCrew} survived`;
+    summaryEnemies.textContent = `${summary.defeatedEnemies} defeated`;
   }
 }
 
@@ -378,8 +394,34 @@ newRunButton.addEventListener("click", () => {
   showSetup();
 });
 
+function retryRun(): void {
+  if (!state || state.phase === "playing") return;
+  showGame(createGame(state.captainConfig, state.seed));
+}
+
+function newCaptain(): void {
+  localStorage.removeItem(SAVE_KEY);
+  showSetup();
+}
+
+retryRunButton.addEventListener("click", retryRun);
+newCaptainButton.addEventListener("click", newCaptain);
+
 document.addEventListener("keydown", (event) => {
   if (!state || gameScreen.hidden) return;
+  if (state.phase !== "playing") {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      retryRun();
+    } else if (event.key.toLowerCase() === "n") {
+      event.preventDefault();
+      newCaptain();
+    } else if (event.key === "?") {
+      event.preventDefault();
+      controlsHelp.open = !controlsHelp.open;
+    }
+    return;
+  }
   if (event.key === "?") {
     event.preventDefault();
     controlsHelp.open = !controlsHelp.open;

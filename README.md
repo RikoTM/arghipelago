@@ -56,4 +56,6 @@ Tests exercise deterministic game creation and validate connected procedural ter
 - `?`: toggle controls
 - `Escape`: cancel targeting
 
+After a run ends, `Enter` retries the same captain and seed; `N` returns to captain creation.
+
 Mouse hover or click inspects map tiles. Touch controls appear on mobile and other coarse-pointer devices; tap the map or use Inspect map, then move the cursor with the direction pad.

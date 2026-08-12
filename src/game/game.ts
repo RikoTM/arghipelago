@@ -68,12 +68,36 @@ export interface MapInspection {
   pickups: Pickup[];
 }
 
+export interface RunSummary {
+  phase: "won" | "lost";
+  seed: string;
+  turns: number;
+  installedRepairs: number;
+  recruitedCrew: number;
+  survivingCrew: number;
+  defeatedEnemies: number;
+}
+
 export function isEnemyConcealed(actor: Actor): boolean {
   return actor.kind === "enemy" && actor.enemyType === "crab" && !actor.alerted;
 }
 
 export function isIncapacitated(actor: Actor): boolean {
   return actor.alive && actor.kind === "crew" && actor.incapacitatedTurns > 0;
+}
+
+export function getRunSummary(state: GameState): RunSummary | null {
+  if (state.phase === "playing") return null;
+  const recruitedCrew = state.actors.filter((actor) => actor.kind === "crew");
+  return {
+    phase: state.phase,
+    seed: state.seed,
+    turns: state.turn,
+    installedRepairs: Object.values(state.repairs).filter(Boolean).length,
+    recruitedCrew: recruitedCrew.length,
+    survivingCrew: recruitedCrew.filter((actor) => actor.alive).length,
+    defeatedEnemies: state.actors.filter((actor) => actor.kind === "enemy" && !actor.alive).length,
+  };
 }
 
 function canAct(actor: Actor): boolean {
