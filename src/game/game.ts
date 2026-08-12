@@ -260,7 +260,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
   }
 
   const state: GameState = {
-    version: 4,
+    version: 5,
     seed,
     rngState: rng.state,
     levels: {
@@ -279,6 +279,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
     threat: 0,
     dangerLevel: 0,
     crewOrder: "follow",
+    crewTargetId: null,
     inventory: { loaded: true, ammo: 6, salts: config.background === "surgeon" ? 2 : 1 },
     recoveredParts: { mast: false, canvas: false, pitch: false },
     repairs: { mast: false, canvas: false, pitch: false },
@@ -387,9 +388,30 @@ function bestStepToward(state: GameState, actor: Actor, destination: Point): Poi
 
 function runCrewTurns(state: GameState, rng: Rng): void {
   const player = captain(state);
+  const orderedTarget = state.actors.find(
+    (actor) =>
+      state.crewOrder === "attack" &&
+      actor.id === state.crewTargetId &&
+      actor.alive &&
+      actor.level === state.currentLevel &&
+      actor.kind === "enemy",
+  );
+  if (state.crewOrder === "attack" && !orderedTarget) {
+    state.crewOrder = "follow";
+    state.crewTargetId = null;
+    addMessage(state, "The crew's target is no longer available. They resume following.");
+  }
   for (const crew of state.actors.filter(
     (actor) => actor.alive && actor.level === state.currentLevel && actor.kind === "crew",
   )) {
+    if (orderedTarget?.alive) {
+      if (distance(crew, orderedTarget) <= 1) meleeAttack(state, crew, orderedTarget, rng);
+      else {
+        const step = bestStepToward(state, crew, orderedTarget);
+        if (step) tryMoveActor(state, crew, step.x, step.y);
+      }
+      continue;
+    }
     const adjacentEnemy = state.actors.find(
       (actor) =>
         actor.alive && actor.level === state.currentLevel && actor.kind === "enemy" && distance(crew, actor) <= 1,
@@ -404,6 +426,11 @@ function runCrewTurns(state: GameState, rng: Rng): void {
       const step = bestStepToward(state, crew, player);
       if (step) tryMoveActor(state, crew, step.x, step.y);
     }
+  }
+  if (orderedTarget && !orderedTarget.alive) {
+    addMessage(state, `${orderedTarget.name} is down. The crew resume following.`);
+    state.crewOrder = "follow";
+    state.crewTargetId = null;
   }
 }
 
@@ -678,9 +705,41 @@ export function cycleCrewOrder(state: GameState): CrewOrder {
   }
   const index = ORDER_SEQUENCE.indexOf(state.crewOrder);
   state.crewOrder = ORDER_SEQUENCE[(index + 1) % ORDER_SEQUENCE.length] ?? "follow";
+  state.crewTargetId = null;
   addMessage(state, `Crew order: ${state.crewOrder}. The crew look approximately convinced.`);
   finishTurn(state);
   return state.crewOrder;
+}
+
+export function commandCrewAttack(state: GameState): boolean {
+  if (state.phase !== "playing") return false;
+  const crewCount = state.actors.filter(
+    (actor) => actor.alive && actor.level === state.currentLevel && actor.kind === "crew",
+  ).length;
+  if (crewCount === 0) {
+    addMessage(state, "There is no crew here to receive an attack order.");
+    return false;
+  }
+  const map = currentMap(state);
+  const target = state.actors.find((actor) => {
+    if (
+      actor.id !== state.targetId ||
+      !actor.alive ||
+      actor.level !== state.currentLevel ||
+      actor.kind !== "enemy"
+    ) return false;
+    return map.tiles[tileIndex(actor.x, actor.y, map.width)]?.visible;
+  });
+  if (!target) {
+    addMessage(state, "Select a visible enemy before ordering the crew to attack.");
+    return false;
+  }
+
+  state.crewOrder = "attack";
+  state.crewTargetId = target.id;
+  addMessage(state, `Crew order: attack ${target.name}.`);
+  finishTurn(state);
+  return true;
 }
 
 export function getCaptain(state: GameState): Actor {

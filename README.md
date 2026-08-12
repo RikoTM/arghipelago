@@ -48,6 +48,7 @@ Tests exercise deterministic game creation and validate connected procedural ter
 - `Enter`: fire at the selected target
 - `R`: reload the flintlock
 - `C`: cycle crew orders
+- `A`: order crew to attack the selected target
 - `E`: interact with the wreck or cave stairs
 - `>`: use cave stairs
 - `?`: toggle controls

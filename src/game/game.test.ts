@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  commandCrewAttack,
   createGame,
+  cycleCrewOrder,
   fireFlintlock,
   getCaptain,
   getInteractionLabel,
@@ -95,7 +97,7 @@ describe("game simulation", () => {
   it("round-trips the complete active run through JSON storage", () => {
     const state = createGame(captain, "save-round-trip");
     const restored = JSON.parse(JSON.stringify(state)) as typeof state;
-    expect(restored.version).toBe(4);
+    expect(restored.version).toBe(5);
     expect(restored).toEqual(state);
     expect(restored.levels.cave.tiles).toHaveLength(state.levels.cave.width * state.levels.cave.height);
   });
@@ -264,6 +266,107 @@ describe("game simulation", () => {
     expect(state.inventory.loaded).toBe(false);
     expect(state.threat).toBeGreaterThan(6);
     expect(fireFlintlock(state)).toBe(false);
+  });
+
+  it("orders crew to pursue the selected visible enemy", () => {
+    const state = createGame(captain, "crew-pursuit");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    const target = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface");
+    expect(crew).toBeDefined();
+    expect(target).toBeDefined();
+    if (!crew || !target) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== target.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (let x = 20; x <= 27; x += 1) {
+      const tile = state.levels.surface.tiles[tileIndex(x, 20, state.levels.surface.width)];
+      if (tile) tile.terrain = "grass";
+    }
+    player.x = 20;
+    player.y = 20;
+    crew.kind = "crew";
+    crew.x = 21;
+    crew.y = 20;
+    target.x = 27;
+    target.y = 20;
+    target.alerted = false;
+    state.targetId = target.id;
+    updateVisibility(state);
+
+    expect(commandCrewAttack(state)).toBe(true);
+    expect(state.turn).toBe(1);
+    expect(state.crewOrder).toBe("attack");
+    expect(state.crewTargetId).toBe(target.id);
+    expect(Math.max(Math.abs(crew.x - target.x), Math.abs(crew.y - target.y))).toBe(5);
+  });
+
+  it("returns crew to follow after they defeat their ordered target", () => {
+    const state = createGame(captain, "crew-finishes-the-job");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    const target = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface");
+    expect(crew).toBeDefined();
+    expect(target).toBeDefined();
+    if (!crew || !target) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== target.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    const positions = [
+      { x: 20, y: 20 },
+      { x: 21, y: 20 },
+      { x: 22, y: 20 },
+    ];
+    for (const position of positions) {
+      const tile = state.levels.surface.tiles[tileIndex(position.x, position.y, state.levels.surface.width)];
+      if (tile) tile.terrain = "grass";
+    }
+    player.x = 20;
+    player.y = 20;
+    crew.kind = "crew";
+    crew.x = 21;
+    crew.y = 20;
+    target.x = 22;
+    target.y = 20;
+    target.hp = 1;
+    state.targetId = target.id;
+    updateVisibility(state);
+
+    expect(commandCrewAttack(state)).toBe(true);
+    expect(target.alive).toBe(false);
+    expect(state.crewOrder).toBe("follow");
+    expect(state.crewTargetId).toBeNull();
+  });
+
+  it("does not spend a turn on an attack order without crew or a selected target", () => {
+    const state = createGame(captain, "orders-require-pirates");
+
+    expect(commandCrewAttack(state)).toBe(false);
+    expect(state.turn).toBe(0);
+
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    expect(crew).toBeDefined();
+    if (!crew) return;
+    crew.kind = "crew";
+    crew.x = state.wreck.x + 1;
+    crew.y = state.wreck.y;
+
+    expect(commandCrewAttack(state)).toBe(false);
+    expect(state.turn).toBe(0);
+  });
+
+  it("cancels an attack assignment when cycling to a standard crew order", () => {
+    const state = createGame(captain, "belay-that-order");
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    expect(crew).toBeDefined();
+    if (!crew) return;
+    crew.kind = "crew";
+    crew.level = "surface";
+    state.crewOrder = "attack";
+    state.crewTargetId = state.actors.find((actor) => actor.kind === "enemy")?.id ?? null;
+
+    expect(cycleCrewOrder(state)).toBe("follow");
+    expect(state.crewTargetId).toBeNull();
   });
 
   it("transitions between the surface and cave without activating enemies on the other level", () => {

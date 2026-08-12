@@ -4,6 +4,7 @@ import "@fontsource/im-fell-english/400-italic.css";
 import "@fontsource/pirata-one/400.css";
 import "@fontsource/special-elite/400.css";
 import {
+  commandCrewAttack,
   createGame,
   cycleCrewOrder,
   cycleTarget,
@@ -19,7 +20,7 @@ import {
 import type { Background, CaptainConfig, Coat, GameState, Knack, RepairPart } from "./game/types";
 import { createRenderer } from "./render";
 
-const SAVE_KEY = "arghipelago.active-run.v4";
+const SAVE_KEY = "arghipelago.active-run.v5";
 
 function requireElement<T extends HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -43,6 +44,7 @@ const crewOrder = requireElement<HTMLElement>("#crew-order");
 const messageLog = requireElement<HTMLElement>("#message-log");
 const phaseBanner = requireElement<HTMLElement>("#phase-banner");
 const fireButton = requireElement<HTMLButtonElement>("#fire-button");
+const crewAttackButton = requireElement<HTMLButtonElement>("#crew-attack-button");
 const contextButton = requireElement<HTMLButtonElement>("#context-button");
 const controlsHelp = requireElement<HTMLDetailsElement>(".controls-help");
 const renderer = createRenderer(canvas);
@@ -70,7 +72,7 @@ function loadSave(): GameState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GameState>;
     if (
-      parsed.version !== 4 ||
+      parsed.version !== 5 ||
       !parsed.levels?.surface ||
       !parsed.levels.cave ||
       !Array.isArray(parsed.actors) ||
@@ -132,7 +134,10 @@ function renderInterface(): void {
   ].join("");
   const activeLevel = state.currentLevel;
   const crew = state.actors.filter((actor) => actor.alive && actor.level === activeLevel && actor.kind === "crew");
-  crewOrder.textContent = state.crewOrder[0]?.toUpperCase() + state.crewOrder.slice(1);
+  const crewTarget = state.actors.find((actor) => actor.alive && actor.id === state?.crewTargetId);
+  crewOrder.textContent = state.crewOrder === "attack" && crewTarget
+    ? `Attack: ${crewTarget.name}`
+    : state.crewOrder[0]?.toUpperCase() + state.crewOrder.slice(1);
   crewList.innerHTML = crew.length
     ? crew
         .map(
@@ -148,6 +153,7 @@ function renderInterface(): void {
     .join("");
   const target = state.actors.find((actor) => actor.alive && actor.id === state?.targetId);
   fireButton.textContent = target ? `Fire at ${target.name}` : "Aim flintlock";
+  crewAttackButton.textContent = target ? `Attack ${target.name}` : "Attack target";
   const onStairs =
     (state.currentLevel === "surface" && player.x === state.caveEntrance.x && player.y === state.caveEntrance.y) ||
     (state.currentLevel === "cave" && player.x === state.caveExit.x && player.y === state.caveExit.y);
@@ -202,6 +208,7 @@ function handleAction(action: string): void {
       renderInterface();
     } else commitAction(() => fireFlintlock(state as GameState));
   } else if (action === "order") commitAction(() => cycleCrewOrder(state as GameState));
+  else if (action === "crew-attack") commitAction(() => commandCrewAttack(state as GameState));
   else if (action === "interact") commitAction(() => interact(state as GameState));
 }
 
@@ -281,6 +288,7 @@ document.addEventListener("keydown", (event) => {
   else if (event.key === ">" || event.key === "<") commitAction(() => useStairs(state as GameState));
   else if (event.key.toLowerCase() === "e") handleAction("interact");
   else if (event.key.toLowerCase() === "f") handleAction(state.targetId === null ? "target-next" : "fire");
+  else if (event.key.toLowerCase() === "a") handleAction("crew-attack");
   else if (event.key.toLowerCase() === "c") handleAction("order");
   else if (event.key === "Tab") {
     event.preventDefault();

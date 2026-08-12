@@ -13,7 +13,7 @@ export type Terrain =
 export type ActorKind = "captain" | "crew" | "castaway" | "enemy";
 export type EnemyType = "skeleton" | "crab" | "slag" | "bonegunner";
 export type LevelId = "surface" | "cave";
-export type CrewOrder = "follow" | "hold" | "rally";
+export type CrewOrder = "follow" | "hold" | "rally" | "attack";
 export type GamePhase = "playing" | "won" | "lost";
 export type Background = "privateer" | "navigator" | "surgeon";
 export type Knack = "duelist" | "deadeye" | "lucky";
@@ -75,7 +75,7 @@ export interface Inventory {
 }
 
 export interface GameState {
-  version: 4;
+  version: 5;
   seed: string;
   rngState: number;
   levels: Record<LevelId, MapLevel>;
@@ -91,6 +91,7 @@ export interface GameState {
   threat: number;
   dangerLevel: number;
   crewOrder: CrewOrder;
+  crewTargetId: number | null;
   inventory: Inventory;
   recoveredParts: Record<RepairPart, boolean>;
   repairs: Record<RepairPart, boolean>;
