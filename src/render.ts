@@ -1,5 +1,5 @@
 import { coordinateNoise } from "./game/rng";
-import { getCaptain, getCurrentMap } from "./game/game";
+import { getCaptain, getCurrentMap, isEnemyConcealed } from "./game/game";
 import type { Actor, Coat, GameState, MapLevel, PickupType, Point, Terrain } from "./game/types";
 import { tileIndex } from "./game/world";
 
@@ -406,7 +406,7 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
 
     for (const actor of state.actors) {
       const tile = map.tiles[tileIndex(actor.x, actor.y, map.width)];
-      if (!actor.alive || actor.level !== state.currentLevel || !tile?.visible) continue;
+      if (!actor.alive || actor.level !== state.currentLevel || isEnemyConcealed(actor) || !tile?.visible) continue;
       const screenX = (actor.x - cameraX) * TILE_SIZE;
       const screenY = (actor.y - cameraY) * TILE_SIZE;
       if (actor.id === state.targetId) {

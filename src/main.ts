@@ -25,6 +25,7 @@ import type {
   Background,
   CaptainConfig,
   Coat,
+  EnemyType,
   GameState,
   Knack,
   LevelId,
@@ -89,6 +90,13 @@ const PICKUP_DETAILS = {
   ammo: "powder and shot",
   salts: "smelling salts",
 } as const;
+
+const ENEMY_TACTICS: Record<EnemyType, string> = {
+  skeleton: "a relentless melee pursuer",
+  crab: "an ambusher that hides until approached",
+  slag: "bursts into damaging embers when slain",
+  bonegunner: "a ranged attacker that retreats from close combat",
+};
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>'"]/g, (character) => {
@@ -161,7 +169,8 @@ function inspectionDescription(result: MapInspection): string {
     else if (actor.kind === "crew" || actor.kind === "castaway") {
       details.push(`${actor.name}, ${actor.role ?? actor.kind}, ${actor.hp}/${actor.maxHp} vigor`);
     } else {
-      details.push(`${actor.name}, ${actor.alerted ? "alerted" : "unaware"}, ${actor.hp}/${actor.maxHp} vigor`);
+      const tactic = actor.enemyType ? ENEMY_TACTICS[actor.enemyType] : "hostile";
+      details.push(`${actor.name}, ${actor.alerted ? "alerted" : "unaware"}, ${actor.hp}/${actor.maxHp} vigor, ${tactic}`);
     }
   }
   for (const pickup of result.pickups) details.push(`${PICKUP_DETAILS[pickup.type]} here`);

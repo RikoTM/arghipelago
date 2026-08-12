@@ -66,6 +66,10 @@ export interface MapInspection {
   pickups: Pickup[];
 }
 
+export function isEnemyConcealed(actor: Actor): boolean {
+  return actor.kind === "enemy" && actor.enemyType === "crab" && !actor.alerted;
+}
+
 function distance(a: Point, b: Point): number {
   return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 }
@@ -159,6 +163,7 @@ export function inspectMapPoint(state: GameState, point: Point): MapInspection |
           (actor) =>
             actor.alive &&
             actor.level === state.currentLevel &&
+            !isEnemyConcealed(actor) &&
             actor.x === point.x &&
             actor.y === point.y,
         )
@@ -354,6 +359,14 @@ function damageActor(state: GameState, target: Actor, amount: number, sourceName
   } else {
     addMessage(state, `${target.name} is killed.`);
     if (target.id === state.targetId) state.targetId = null;
+    if (target.kind === "enemy" && target.enemyType === "slag") {
+      addMessage(state, `${target.name} bursts in a ring of furnace-hot embers.`);
+      for (const actor of state.actors) {
+        if (actor.alive && actor.level === target.level && distance(actor, target) <= 1) {
+          damageActor(state, actor, 2, `${target.name}'s fiery collapse`);
+        }
+      }
+    }
   }
 }
 
@@ -444,6 +457,29 @@ function bestStepToward(
   return null;
 }
 
+function bestStepAway(state: GameState, actor: Actor, threat: Point): Point | null {
+  const map = currentMap(state);
+  const currentDistance = distance(actor, threat);
+  let best: Point | null = null;
+  let bestDistance = currentDistance;
+  for (const direction of DIRECTIONS) {
+    const point = { x: actor.x + direction.x, y: actor.y + direction.y };
+    if (!inBounds(point.x, point.y, map.width, map.height)) continue;
+    const tile = map.tiles[tileIndex(point.x, point.y, map.width)];
+    const candidateDistance = distance(point, threat);
+    if (
+      tile &&
+      isPassableTerrain(tile.terrain) &&
+      !actorAt(state, point.x, point.y, actor.id) &&
+      candidateDistance > bestDistance
+    ) {
+      best = point;
+      bestDistance = candidateDistance;
+    }
+  }
+  return best;
+}
+
 function runCrewTurns(state: GameState, rng: Rng): void {
   const player = captain(state);
   const orderedTarget = state.actors.find(
@@ -508,7 +544,7 @@ function runEnemyTurns(state: GameState, rng: Rng): void {
     const targets = possibleTargets().sort((a, b) => distance(enemy, a) - distance(enemy, b));
     const target = targets[0];
     if (!target) continue;
-    const detectionRange = enemy.enemyType === "bonegunner" ? 7 : enemy.enemyType === "crab" ? 4 : 5;
+    const detectionRange = enemy.enemyType === "bonegunner" ? 7 : enemy.enemyType === "crab" ? 2 : 5;
     if (distance(enemy, player) <= detectionRange && hasLineOfSight(state, enemy, player)) {
       enemy.alerted = true;
       enemy.alertTurns = 10;
@@ -517,6 +553,14 @@ function runEnemyTurns(state: GameState, rng: Rng): void {
       if (enemy.alertTurns <= 0 && distance(enemy, player) > detectionRange) enemy.alerted = false;
     }
     if (!enemy.alerted) continue;
+
+    if (enemy.enemyType === "bonegunner" && distance(enemy, target) <= 2) {
+      const retreat = bestStepAway(state, enemy, target);
+      if (retreat) {
+        tryMoveActor(state, enemy, retreat.x, retreat.y);
+        continue;
+      }
+    }
 
     if (distance(enemy, target) <= 1) {
       meleeAttack(state, enemy, target, rng);
@@ -625,6 +669,13 @@ export function moveCaptain(state: GameState, dx: number, dy: number): boolean {
   const occupant = actorAt(state, x, y, player.id);
   if (occupant) {
     if (occupant.kind === "enemy") {
+      if (isEnemyConcealed(occupant)) {
+        occupant.alerted = true;
+        occupant.alertTurns = 10;
+        addMessage(state, `${occupant.name} erupts from the sand in a storm of claws.`);
+        finishTurn(state);
+        return true;
+      }
       const rng = new Rng(state.rngState);
       meleeAttack(state, player, occupant, rng);
       state.rngState = rng.state;
@@ -712,7 +763,12 @@ export function visibleEnemies(state: GameState): Actor[] {
   return state.actors
     .filter((actor) => {
       const tile = map.tiles[tileIndex(actor.x, actor.y, map.width)];
-      return actor.alive && actor.level === state.currentLevel && actor.kind === "enemy" && tile?.visible && distance(player, actor) <= 8;
+      return actor.alive &&
+        actor.level === state.currentLevel &&
+        actor.kind === "enemy" &&
+        !isEnemyConcealed(actor) &&
+        tile?.visible &&
+        distance(player, actor) <= 8;
     })
     .sort((a, b) => distance(player, a) - distance(player, b));
 }
@@ -738,7 +794,8 @@ export function fireFlintlock(state: GameState): boolean {
       actor.id === state.targetId &&
       actor.alive &&
       actor.level === state.currentLevel &&
-      actor.kind === "enemy",
+      actor.kind === "enemy" &&
+      !isEnemyConcealed(actor),
   );
   if (!target) target = visibleEnemies(state)[0];
   if (!target || distance(player, target) > 8 || !hasLineOfSight(state, player, target)) {
@@ -805,7 +862,8 @@ export function commandCrewAttack(state: GameState): boolean {
       actor.id !== state.targetId ||
       !actor.alive ||
       actor.level !== state.currentLevel ||
-      actor.kind !== "enemy"
+      actor.kind !== "enemy" ||
+      isEnemyConcealed(actor)
     ) return false;
     return map.tiles[tileIndex(actor.x, actor.y, map.width)]?.visible;
   });

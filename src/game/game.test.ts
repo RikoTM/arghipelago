@@ -12,6 +12,7 @@ import {
   updateVisibility,
   useSmellingSalts,
   useStairs,
+  visibleEnemies,
   waitTurn,
 } from "./game";
 import type { CaptainConfig } from "./types";
@@ -554,6 +555,127 @@ describe("game simulation", () => {
     }
 
     expect(first).toEqual(second);
+  });
+
+  it("keeps crabs concealed until the captain approaches their tile", () => {
+    const state = createGame(captain, "crab-ambush");
+    const player = getCaptain(state);
+    const crab = state.actors.find((actor) => actor.enemyType === "crab" && actor.level === "surface");
+    expect(crab).toBeDefined();
+    if (!crab) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== crab.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    const crabTile = state.levels.surface.tiles[tileIndex(player.x + 1, player.y, state.levels.surface.width)];
+    expect(crabTile).toBeDefined();
+    if (!crabTile) return;
+    crabTile.terrain = "sand";
+    crab.x = player.x + 1;
+    crab.y = player.y;
+    crab.alerted = false;
+    crab.alertTurns = 0;
+    updateVisibility(state);
+
+    expect(visibleEnemies(state)).not.toContain(crab);
+    expect(inspectMapPoint(state, crab)?.actors).toEqual([]);
+    state.targetId = crab.id;
+    expect(fireFlintlock(state)).toBe(false);
+    expect(state.turn).toBe(0);
+
+    expect(moveCaptain(state, 1, 0)).toBe(true);
+    expect(player).not.toMatchObject({ x: crab.x, y: crab.y });
+    expect(crab.alerted).toBe(true);
+    expect(state.turn).toBe(1);
+    expect(inspectMapPoint(state, crab)?.actors).toEqual([crab]);
+  });
+
+  it("has bonegunners retreat from close combat when space is available", () => {
+    const state = createGame(captain, "bonegunner-retreat");
+    const player = getCaptain(state);
+    const gunner = state.actors.find((actor) => actor.enemyType === "bonegunner" && actor.level === "surface");
+    expect(gunner).toBeDefined();
+    if (!gunner) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== gunner.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    gunner.x = 21;
+    gunner.y = 20;
+    gunner.alerted = true;
+    gunner.alertTurns = 10;
+
+    waitTurn(state);
+
+    expect(Math.max(Math.abs(gunner.x - player.x), Math.abs(gunner.y - player.y))).toBe(2);
+    expect(player.hp).toBe(player.maxHp);
+  });
+
+  it("makes slain slags damage every adjacent actor", () => {
+    const state = createGame(captain, "slag-burst");
+    const player = getCaptain(state);
+    const slag = state.actors.find((actor) => actor.enemyType === "slag" && actor.level === "surface");
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    expect(slag).toBeDefined();
+    expect(crew).toBeDefined();
+    if (!slag || !crew) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== slag.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    slag.x = 21;
+    slag.y = 20;
+    slag.hp = 1;
+    slag.alerted = true;
+    crew.kind = "crew";
+    crew.x = 21;
+    crew.y = 21;
+    const playerHealth = player.hp;
+    const crewHealth = crew.hp;
+
+    expect(moveCaptain(state, 1, 0)).toBe(true);
+
+    expect(slag.alive).toBe(false);
+    expect(player.hp).toBe(playerHealth - 2);
+    expect(crew.hp).toBe(crewHealth - 2);
+  });
+
+  it("resolves adjacent slag chain bursts without repeating dead explosions", () => {
+    const state = createGame(captain, "slag-chain");
+    const player = getCaptain(state);
+    const first = state.actors.find((actor) => actor.enemyType === "slag" && actor.level === "surface");
+    const second = state.actors.find(
+      (actor) => actor.kind === "enemy" && actor.level === "surface" && actor.id !== first?.id,
+    );
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    if (!first || !second) return;
+    second.enemyType = "slag";
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== first.id && actor.id !== second.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    first.x = 21;
+    first.y = 20;
+    first.hp = 1;
+    first.alerted = true;
+    second.x = 22;
+    second.y = 20;
+    second.hp = 1;
+    second.alerted = true;
+    const playerHealth = player.hp;
+
+    expect(moveCaptain(state, 1, 0)).toBe(true);
+
+    expect(first.alive).toBe(false);
+    expect(second.alive).toBe(false);
+    expect(player.hp).toBe(playerHealth - 2);
+    expect(state.messages.filter((message) => message.includes("bursts in a ring"))).toHaveLength(2);
   });
 
   it("transitions between the surface and cave without activating enemies on the other level", () => {
