@@ -48,6 +48,7 @@ Tests exercise deterministic game creation and validate connected procedural ter
 - `Enter`: fire at the selected target
 - `R`: reload the flintlock
 - `S`: use smelling salts to rescue adjacent crew or restore vigor
+- `D`: make a deliberate noise to lure nearby enemies
 - `C`: cycle crew orders
 - `A`: order crew to attack the selected target
 - `E`: interact with the wreck or cave stairs

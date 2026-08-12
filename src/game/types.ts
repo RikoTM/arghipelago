@@ -12,6 +12,7 @@ export type Terrain =
 
 export type ActorKind = "captain" | "crew" | "castaway" | "enemy";
 export type EnemyType = "skeleton" | "crab" | "slag" | "bonegunner";
+export type EnemyAwarenessMode = "investigating" | "pursuing";
 export type LevelId = "surface" | "cave";
 export type CrewOrder = "follow" | "hold" | "rally" | "attack";
 export type GamePhase = "playing" | "won" | "lost";
@@ -46,6 +47,12 @@ export interface CaptainConfig {
   coat: Coat;
 }
 
+export interface EnemyAwareness {
+  mode: EnemyAwarenessMode;
+  lastKnownPosition: Point;
+  expiresAtTurn: number;
+}
+
 export interface Actor extends Point {
   id: number;
   level: LevelId;
@@ -58,8 +65,7 @@ export interface Actor extends Point {
   melee: number;
   alive: boolean;
   incapacitatedTurns: number;
-  alerted: boolean;
-  alertTurns: number;
+  enemyAwareness: EnemyAwareness | null;
 }
 
 export interface Pickup extends Point {
@@ -76,7 +82,7 @@ export interface Inventory {
 }
 
 export interface GameState {
-  version: 6;
+  version: 7;
   seed: string;
   rngState: number;
   levels: Record<LevelId, MapLevel>;

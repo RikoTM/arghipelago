@@ -9,6 +9,7 @@ import {
   getRunSummary,
   inspectMapPoint,
   interact,
+  makeDistraction,
   moveCaptain,
   updateVisibility,
   useSmellingSalts,
@@ -16,7 +17,7 @@ import {
   visibleEnemies,
   waitTurn,
 } from "./game";
-import type { CaptainConfig } from "./types";
+import type { Actor, CaptainConfig, Point } from "./types";
 import { generateCave, generateIsland, isPassableTerrain, tileIndex } from "./world";
 
 const captain: CaptainConfig = {
@@ -25,6 +26,14 @@ const captain: CaptainConfig = {
   knack: "duelist",
   coat: "crimson",
 };
+
+function pursue(actor: Actor, target: Point, expiresAtTurn = 100): void {
+  actor.enemyAwareness = {
+    mode: "pursuing",
+    lastKnownPosition: { x: target.x, y: target.y },
+    expiresAtTurn,
+  };
+}
 
 function routeTo(
   tiles: ReturnType<typeof generateIsland>["tiles"],
@@ -105,7 +114,7 @@ describe("game simulation", () => {
   it("round-trips the complete active run through JSON storage", () => {
     const state = createGame(captain, "save-round-trip");
     const restored = JSON.parse(JSON.stringify(state)) as typeof state;
-    expect(restored.version).toBe(6);
+    expect(restored.version).toBe(7);
     expect(restored).toEqual(state);
     expect(restored.levels.cave.tiles).toHaveLength(state.levels.cave.width * state.levels.cave.height);
   });
@@ -201,7 +210,7 @@ describe("game simulation", () => {
     enemy.x = player.x + 1;
     enemy.y = player.y;
     enemy.melee = 99;
-    enemy.alerted = true;
+    pursue(enemy, player);
     player.hp = 1;
     state.inventory.salts = 0;
     state.recoveredParts = { mast: true, canvas: true, pitch: true };
@@ -362,7 +371,7 @@ describe("game simulation", () => {
     slag.x = 21;
     slag.y = 20;
     slag.hp = 1;
-    slag.alerted = true;
+    pursue(slag, player);
 
     expect(moveCaptain(state, 1, 0)).toBe(true);
 
@@ -485,12 +494,129 @@ describe("game simulation", () => {
     const initialPositions = surfaceEnemies.map((enemy) => ({ id: enemy.id, x: enemy.x, y: enemy.y }));
 
     expect(surfaceEnemies).toHaveLength(7);
-    expect(surfaceEnemies.every((enemy) => !enemy.alerted)).toBe(true);
+    expect(surfaceEnemies.every((enemy) => enemy.enemyAwareness === null)).toBe(true);
     for (let turn = 0; turn < 20; turn += 1) waitTurn(state);
 
     expect(state.phase).toBe("playing");
-    expect(surfaceEnemies.every((enemy) => !enemy.alerted)).toBe(true);
+    expect(surfaceEnemies.every((enemy) => enemy.enemyAwareness === null)).toBe(true);
     expect(surfaceEnemies.map((enemy) => ({ id: enemy.id, x: enemy.x, y: enemy.y }))).toEqual(initialPositions);
+  });
+
+  it("makes enemies investigate the location of a deliberate noise", () => {
+    const state = createGame(captain, "spatial-distraction");
+    const player = getCaptain(state);
+    const enemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType !== "crab");
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== enemy.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    enemy.x = 26;
+    enemy.y = 20;
+    enemy.enemyAwareness = null;
+
+    expect(makeDistraction(state)).toBe(true);
+
+    expect(enemy.enemyAwareness).toMatchObject({
+      mode: "investigating",
+      lastKnownPosition: { x: 20, y: 20 },
+      expiresAtTurn: 9,
+    });
+    expect(enemy).toMatchObject({ x: 25, y: 19 });
+    expect(state.turn).toBe(1);
+  });
+
+  it("does not let investigation track the captain's later movement", () => {
+    const state = createGame(captain, "sound-is-not-telepathy");
+    const player = getCaptain(state);
+    const enemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType !== "crab");
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== enemy.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    enemy.x = 26;
+    enemy.y = 20;
+
+    makeDistraction(state);
+    const heard = enemy.enemyAwareness?.lastKnownPosition;
+    player.x = 20;
+    player.y = 25;
+    waitTurn(state);
+
+    expect(heard).toEqual({ x: 20, y: 20 });
+    expect(enemy.enemyAwareness?.lastKnownPosition).toEqual({ x: 20, y: 20 });
+  });
+
+  it("keeps sounds isolated to their level", () => {
+    const state = createGame(captain, "level-soundproofing");
+    const player = getCaptain(state);
+    const surfaceEnemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface");
+    const caveEnemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "cave");
+    expect(surfaceEnemy).toBeDefined();
+    expect(caveEnemy).toBeDefined();
+    if (!surfaceEnemy || !caveEnemy) return;
+    player.x = state.caveEntrance.x;
+    player.y = state.caveEntrance.y;
+    useStairs(state);
+    surfaceEnemy.enemyAwareness = null;
+    caveEnemy.x = player.x + 4;
+    caveEnemy.y = player.y;
+    caveEnemy.enemyAwareness = null;
+
+    makeDistraction(state);
+
+    expect(caveEnemy.enemyAwareness).not.toBeNull();
+    expect(surfaceEnemy.enemyAwareness).toBeNull();
+  });
+
+  it("expires awareness on inactive levels after the exact memory window", () => {
+    const state = createGame(captain, "forgotten-surface-noise");
+    const player = getCaptain(state);
+    const enemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface");
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    enemy.enemyAwareness = {
+      mode: "investigating",
+      lastKnownPosition: { x: enemy.x, y: enemy.y },
+      expiresAtTurn: state.turn + 2,
+    };
+    player.x = state.caveEntrance.x;
+    player.y = state.caveEntrance.y;
+    useStairs(state);
+
+    expect(enemy.enemyAwareness).not.toBeNull();
+    waitTurn(state);
+    expect(enemy.enemyAwareness).toBeNull();
+  });
+
+  it("flushes concealed crabs from hiding with nearby noise", () => {
+    const state = createGame(captain, "noisy-crab-flushing");
+    const player = getCaptain(state);
+    const crab = state.actors.find((actor) => actor.enemyType === "crab" && actor.level === "surface");
+    expect(crab).toBeDefined();
+    if (!crab) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== crab.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    crab.x = 25;
+    crab.y = 20;
+    crab.enemyAwareness = null;
+
+    expect(visibleEnemies(state)).not.toContain(crab);
+    makeDistraction(state);
+
+    expect(crab.enemyAwareness).toMatchObject({ mode: "investigating" });
+    expect(visibleEnemies(state)).toContain(crab);
   });
 
   it("delays reinforcement spawns until turn 60", () => {
@@ -530,7 +656,7 @@ describe("game simulation", () => {
     if (!enemy) return;
     enemy.x = player.x + 2;
     enemy.y = player.y;
-    enemy.alerted = false;
+    enemy.enemyAwareness = null;
     updateVisibility(state);
     state.targetId = enemy.id;
 
@@ -562,7 +688,7 @@ describe("game simulation", () => {
     crew.y = 20;
     target.x = 27;
     target.y = 20;
-    target.alerted = false;
+    target.enemyAwareness = null;
     state.targetId = target.id;
     updateVisibility(state);
 
@@ -682,8 +808,7 @@ describe("game simulation", () => {
     player.y = 20;
     enemy.x = 24;
     enemy.y = 20;
-    enemy.alerted = true;
-    enemy.alertTurns = 10;
+    pursue(enemy, player);
 
     waitTurn(state);
 
@@ -742,8 +867,7 @@ describe("game simulation", () => {
     crabTile.terrain = "sand";
     crab.x = player.x + 1;
     crab.y = player.y;
-    crab.alerted = false;
-    crab.alertTurns = 0;
+    crab.enemyAwareness = null;
     updateVisibility(state);
 
     expect(visibleEnemies(state)).not.toContain(crab);
@@ -754,7 +878,7 @@ describe("game simulation", () => {
 
     expect(moveCaptain(state, 1, 0)).toBe(true);
     expect(player).not.toMatchObject({ x: crab.x, y: crab.y });
-    expect(crab.alerted).toBe(true);
+    expect(crab.enemyAwareness).toMatchObject({ mode: "pursuing" });
     expect(state.turn).toBe(1);
     expect(inspectMapPoint(state, crab)?.actors).toEqual([crab]);
   });
@@ -773,8 +897,7 @@ describe("game simulation", () => {
     player.y = 20;
     gunner.x = 21;
     gunner.y = 20;
-    gunner.alerted = true;
-    gunner.alertTurns = 10;
+    pursue(gunner, player);
 
     waitTurn(state);
 
@@ -799,7 +922,7 @@ describe("game simulation", () => {
     slag.x = 21;
     slag.y = 20;
     slag.hp = 1;
-    slag.alerted = true;
+    pursue(slag, player);
     crew.kind = "crew";
     crew.x = 21;
     crew.y = 21;
@@ -833,11 +956,11 @@ describe("game simulation", () => {
     first.x = 21;
     first.y = 20;
     first.hp = 1;
-    first.alerted = true;
+    pursue(first, player);
     second.x = 22;
     second.y = 20;
     second.hp = 1;
-    second.alerted = true;
+    pursue(second, player);
     const playerHealth = player.hp;
 
     expect(moveCaptain(state, 1, 0)).toBe(true);

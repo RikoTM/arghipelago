@@ -16,6 +16,7 @@ import {
   inspectMapPoint,
   interact,
   isIncapacitated,
+  makeDistraction,
   moveCaptain,
   reloadFlintlock,
   useStairs,
@@ -37,7 +38,7 @@ import type {
 } from "./game/types";
 import { createRenderer, getMapCamera, moveInspectionCursor, worldPointFromClient } from "./render";
 
-const SAVE_KEY = "arghipelago.active-run.v6";
+const SAVE_KEY = "arghipelago.active-run.v7";
 
 function requireElement<T extends HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -131,7 +132,7 @@ function loadSave(): GameState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GameState>;
     if (
-      parsed.version !== 6 ||
+      parsed.version !== 7 ||
       !parsed.levels?.surface ||
       !parsed.levels.cave ||
       !Array.isArray(parsed.actors) ||
@@ -141,7 +142,13 @@ function loadSave(): GameState | null {
           actor.incapacitatedTurns < 0 ||
           actor.incapacitatedTurns > 10 ||
           (actor.incapacitatedTurns > 0 && (actor.kind !== "crew" || !actor.alive || actor.hp !== 0)) ||
-          (actor.kind === "crew" && actor.alive && actor.hp === 0 && actor.incapacitatedTurns === 0),
+          (actor.kind === "crew" && actor.alive && actor.hp === 0 && actor.incapacitatedTurns === 0) ||
+          (actor.kind !== "enemy" && actor.enemyAwareness !== null) ||
+          (actor.enemyAwareness !== null &&
+            (actor.enemyAwareness.mode !== "investigating" && actor.enemyAwareness.mode !== "pursuing" ||
+              !Number.isInteger(actor.enemyAwareness.lastKnownPosition.x) ||
+              !Number.isInteger(actor.enemyAwareness.lastKnownPosition.y) ||
+              !Number.isInteger(actor.enemyAwareness.expiresAtTurn))),
       ) ||
       !parsed.recoveredParts ||
       !parsed.repairs
@@ -191,7 +198,11 @@ function inspectionDescription(result: MapInspection): string {
       details.push(`${actor.name}, ${actor.role ?? actor.kind}, ${actor.hp}/${actor.maxHp} vigor`);
     } else {
       const tactic = actor.enemyType ? ENEMY_TACTICS[actor.enemyType] : "hostile";
-      details.push(`${actor.name}, ${actor.alerted ? "alerted" : "unaware"}, ${actor.hp}/${actor.maxHp} vigor, ${tactic}`);
+      const awareness = actor.enemyAwareness;
+      const behavior = awareness
+        ? `${awareness.mode} ${awareness.lastKnownPosition.x},${awareness.lastKnownPosition.y} until turn ${awareness.expiresAtTurn}`
+        : "unaware";
+      details.push(`${actor.name}, ${behavior}, ${actor.hp}/${actor.maxHp} vigor, ${tactic}`);
     }
   }
   for (const pickup of result.pickups) details.push(`${PICKUP_DETAILS[pickup.type]} here`);
@@ -357,6 +368,7 @@ function handleAction(action: string): void {
   if (action === "wait") commitAction(() => waitTurn(state as GameState));
   else if (action === "reload") commitAction(() => reloadFlintlock(state as GameState));
   else if (action === "salts") commitAction(() => useSmellingSalts(state as GameState));
+  else if (action === "distract") commitAction(() => makeDistraction(state as GameState));
   else if (action === "target-next") {
     cycleTarget(state);
     renderInterface();
@@ -483,6 +495,7 @@ document.addEventListener("keydown", (event) => {
     handleAction("wait");
   } else if (event.key.toLowerCase() === "r") handleAction("reload");
   else if (event.key.toLowerCase() === "s") handleAction("salts");
+  else if (event.key.toLowerCase() === "d") handleAction("distract");
   else if (event.key.toLowerCase() === "x") setInspection(getCaptain(state), "locked");
   else if (event.key === ">" || event.key === "<") commitAction(() => useStairs(state as GameState));
   else if (event.key.toLowerCase() === "e") handleAction("interact");
