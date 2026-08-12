@@ -1,11 +1,11 @@
 import { coordinateNoise } from "./game/rng";
 import { getCaptain, getCurrentMap } from "./game/game";
-import type { Actor, Coat, GameState, PickupType, Terrain } from "./game/types";
+import type { Actor, Coat, GameState, MapLevel, PickupType, Point, Terrain } from "./game/types";
 import { tileIndex } from "./game/world";
 
 const TILE_SIZE = 32;
-const VIEW_COLUMNS = 20;
-const VIEW_ROWS = 13;
+export const VIEW_COLUMNS = 20;
+export const VIEW_ROWS = 13;
 
 const INK = "#1e2522";
 const PALE_INK = "#57594f";
@@ -23,7 +23,56 @@ const COAT_COLORS: Record<Coat, string> = {
 type SpriteKind = Terrain | PickupType | "captain" | "crew" | "castaway" | "skeleton" | "crab" | "slag" | "bonegunner";
 
 export interface Renderer {
-  draw(state: GameState): void;
+  draw(state: GameState, cursor?: Point | null): void;
+}
+
+interface CanvasRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+export function getMapCamera(map: MapLevel, focus: Point, cursor: Point | null = null): Point {
+  const maximumX = Math.max(0, map.width - VIEW_COLUMNS);
+  const maximumY = Math.max(0, map.height - VIEW_ROWS);
+  let x = Math.max(0, Math.min(maximumX, focus.x - Math.floor(VIEW_COLUMNS / 2)));
+  let y = Math.max(0, Math.min(maximumY, focus.y - Math.floor(VIEW_ROWS / 2)));
+  if (cursor) {
+    if (cursor.x < x) x = cursor.x;
+    else if (cursor.x >= x + VIEW_COLUMNS) x = cursor.x - VIEW_COLUMNS + 1;
+    if (cursor.y < y) y = cursor.y;
+    else if (cursor.y >= y + VIEW_ROWS) y = cursor.y - VIEW_ROWS + 1;
+  }
+  return {
+    x: Math.max(0, Math.min(maximumX, x)),
+    y: Math.max(0, Math.min(maximumY, y)),
+  };
+}
+
+export function worldPointFromClient(
+  client: Point,
+  rect: CanvasRect,
+  camera: Point,
+  map: MapLevel,
+): Point | null {
+  const relativeX = client.x - rect.left;
+  const relativeY = client.y - rect.top;
+  if (rect.width <= 0 || rect.height <= 0 || relativeX < 0 || relativeY < 0 || relativeX >= rect.width || relativeY >= rect.height) {
+    return null;
+  }
+  const point = {
+    x: camera.x + Math.floor((relativeX / rect.width) * VIEW_COLUMNS),
+    y: camera.y + Math.floor((relativeY / rect.height) * VIEW_ROWS),
+  };
+  return point.x < map.width && point.y < map.height ? point : null;
+}
+
+export function moveInspectionCursor(point: Point, dx: number, dy: number, map: MapLevel): Point {
+  return {
+    x: Math.max(0, Math.min(map.width - 1, point.x + Math.sign(dx))),
+    y: Math.max(0, Math.min(map.height - 1, point.y + Math.sign(dy))),
+  };
 }
 
 function hatch(context: CanvasRenderingContext2D, spacing: number, color: string, reverse = false): void {
@@ -312,11 +361,12 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
     return value;
   }
 
-  function draw(state: GameState): void {
+  function draw(state: GameState, cursor: Point | null = null): void {
     const player = getCaptain(state);
     const map = getCurrentMap(state);
-    const cameraX = Math.max(0, Math.min(map.width - VIEW_COLUMNS, player.x - Math.floor(VIEW_COLUMNS / 2)));
-    const cameraY = Math.max(0, Math.min(map.height - VIEW_ROWS, player.y - Math.floor(VIEW_ROWS / 2)));
+    const camera = getMapCamera(map, player, cursor);
+    const cameraX = camera.x;
+    const cameraY = camera.y;
     context.fillStyle = INK;
     context.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -377,6 +427,22 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
         context.fillRect(screenX + 4, screenY + 1, 24, 3);
         context.fillStyle = "#8c3f36";
         context.fillRect(screenX + 4, screenY + 1, Math.ceil(24 * (actor.hp / actor.maxHp)), 3);
+      }
+    }
+
+    if (cursor) {
+      const screenX = (cursor.x - cameraX) * TILE_SIZE;
+      const screenY = (cursor.y - cameraY) * TILE_SIZE;
+      if (screenX >= 0 && screenY >= 0 && screenX < canvas.width && screenY < canvas.height) {
+        context.save();
+        context.strokeStyle = PAPER;
+        context.lineWidth = 5;
+        context.strokeRect(screenX + 3, screenY + 3, TILE_SIZE - 6, TILE_SIZE - 6);
+        context.strokeStyle = INK;
+        context.lineWidth = 2;
+        context.setLineDash([5, 3]);
+        context.strokeRect(screenX + 3, screenY + 3, TILE_SIZE - 6, TILE_SIZE - 6);
+        context.restore();
       }
     }
 

@@ -238,6 +238,37 @@ canvas {
   touch-action: none;
 }
 
+canvas:focus-visible {
+  outline: 3px solid #d8caa9;
+  outline-offset: 3px;
+}
+
+.inspection-readout {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid #766c57;
+  color: var(--ink);
+  background: var(--paper);
+  box-shadow: 3px 4px 0 #0004;
+}
+
+.inspection-readout[hidden] {
+  display: none;
+}
+
+.inspection-readout strong {
+  font-family: "Special Elite", monospace;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.inspection-readout span {
+  font-size: 0.86rem;
+}
+
 .phase-banner {
   position: absolute;
   inset: 30% 12%;
@@ -468,6 +499,10 @@ kbd {
   background: #222b27;
 }
 
+#touch-controls button:disabled {
+  opacity: 0.38;
+}
+
 .action-pad button.context-ready {
   color: #202824;
   background: #d8caa9;
@@ -581,6 +616,11 @@ kbd {
 
   .map-frame {
     padding: 5px;
+  }
+
+  .inspection-readout {
+    grid-template-columns: 1fr;
+    gap: 3px;
   }
 
   .touch-controls {

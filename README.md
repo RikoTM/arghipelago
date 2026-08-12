@@ -51,8 +51,9 @@ Tests exercise deterministic game creation and validate connected procedural ter
 - `C`: cycle crew orders
 - `A`: order crew to attack the selected target
 - `E`: interact with the wreck or cave stairs
+- `X`: inspect the map; movement keys move the inspection cursor
 - `>`: use cave stairs
 - `?`: toggle controls
 - `Escape`: cancel targeting
 
-Touch controls appear on mobile and other coarse-pointer devices.
+Mouse hover or click inspects map tiles. Touch controls appear on mobile and other coarse-pointer devices; tap the map or use Inspect map, then move the cursor with the direction pad.

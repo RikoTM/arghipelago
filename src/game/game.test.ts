@@ -6,6 +6,7 @@ import {
   fireFlintlock,
   getCaptain,
   getInteractionLabel,
+  inspectMapPoint,
   interact,
   moveCaptain,
   updateVisibility,
@@ -188,6 +189,69 @@ describe("game simulation", () => {
 
     expect(interact(state)).toBe(false);
     expect(state.turn).toBe(0);
+  });
+
+  it("hides contents and terrain on unexplored inspection points", () => {
+    const state = createGame(captain, "uncharted-inspection");
+    const enemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface");
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    const tile = state.levels.surface.tiles[tileIndex(enemy.x, enemy.y, state.levels.surface.width)];
+    expect(tile).toBeDefined();
+    if (!tile) return;
+    tile.explored = false;
+    tile.visible = false;
+
+    expect(inspectMapPoint(state, enemy)).toEqual({
+      visibility: "unexplored",
+      terrain: null,
+      actors: [],
+      pickups: [],
+    });
+  });
+
+  it("shows static remembered contents without revealing actors through fog", () => {
+    const state = createGame(captain, "remembered-inspection");
+    const enemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface");
+    const pickup = state.pickups.find((candidate) => candidate.level === "surface");
+    expect(enemy).toBeDefined();
+    expect(pickup).toBeDefined();
+    if (!enemy || !pickup) return;
+    enemy.x = pickup.x;
+    enemy.y = pickup.y;
+    const tile = state.levels.surface.tiles[tileIndex(pickup.x, pickup.y, state.levels.surface.width)];
+    expect(tile).toBeDefined();
+    if (!tile) return;
+    tile.explored = true;
+    tile.visible = false;
+
+    const inspection = inspectMapPoint(state, pickup);
+    expect(inspection?.visibility).toBe("remembered");
+    expect(inspection?.terrain).toBe(tile.terrain);
+    expect(inspection?.actors).toEqual([]);
+    expect(inspection?.pickups).toEqual([pickup]);
+  });
+
+  it("shows living actors only when their tile is currently visible", () => {
+    const state = createGame(captain, "visible-inspection");
+    const player = getCaptain(state);
+    const inspection = inspectMapPoint(state, player);
+
+    expect(inspection?.visibility).toBe("visible");
+    expect(inspection?.actors).toEqual([player]);
+  });
+
+  it("uses cave dimensions when inspecting cave tiles", () => {
+    const state = createGame(captain, "cave-inspection-width");
+    state.currentLevel = "cave";
+    const point = { x: state.levels.cave.width - 1, y: state.levels.cave.height - 1 };
+    const tile = state.levels.cave.tiles[tileIndex(point.x, point.y, state.levels.cave.width)];
+    expect(tile).toBeDefined();
+    if (!tile) return;
+    tile.explored = true;
+
+    expect(inspectMapPoint(state, point)?.terrain).toBe(tile.terrain);
+    expect(inspectMapPoint(state, { x: state.levels.cave.width, y: point.y })).toBeNull();
   });
 
   it("does not spend a turn on an invalid move into water", () => {

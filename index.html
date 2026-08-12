@@ -74,8 +74,19 @@
       <section id="game-screen" class="game-screen" hidden aria-label="Arghipelago game">
         <div class="map-column">
           <div class="map-frame">
-            <canvas id="game-map" width="640" height="416" aria-label="Game map"></canvas>
+            <canvas
+              id="game-map"
+              width="640"
+              height="416"
+              tabindex="0"
+              aria-label="Game map"
+              aria-describedby="inspection-readout"
+            ></canvas>
             <div id="phase-banner" class="phase-banner" hidden></div>
+          </div>
+          <div id="inspection-readout" class="inspection-readout" role="status" aria-live="polite" aria-atomic="true" hidden>
+            <strong id="inspection-title"></strong>
+            <span id="inspection-detail"></span>
           </div>
           <div id="touch-controls" class="touch-controls" aria-label="Touch controls">
             <div class="dpad" aria-label="Movement">
@@ -93,7 +104,7 @@
               <button id="fire-button" data-action="fire">Aim flintlock</button>
               <button data-action="reload">Reload</button>
               <button data-action="target-next">Next target</button>
-              <button id="context-button" data-action="interact">Inspect surroundings</button>
+              <button id="context-button" data-action="interact">Inspect map</button>
               <button data-action="order">Crew order</button>
               <button id="crew-attack-button" data-action="crew-attack">Attack target</button>
               <button data-action="salts">Use salts</button>
@@ -135,7 +146,7 @@
             <summary>Controls <kbd>?</kbd></summary>
             <p><kbd>Arrows</kbd> / <kbd>HJKL</kbd> / keypad move; diagonals use <kbd>YUBN</kbd> or keypad corners.</p>
             <p><kbd>.</kbd> waits, <kbd>F</kbd> aims, <kbd>R</kbd> reloads, <kbd>S</kbd> uses salts, <kbd>E</kbd> interacts.</p>
-            <p><kbd>Tab</kbd> changes target. <kbd>Enter</kbd> fires. <kbd>C</kbd> changes crew order. <kbd>A</kbd> orders an attack.</p>
+            <p><kbd>X</kbd> inspects the map. <kbd>Tab</kbd> changes target. <kbd>Enter</kbd> fires. <kbd>C</kbd> changes crew order. <kbd>A</kbd> orders an attack.</p>
           </details>
 
           <button id="new-run-button" class="text-button" type="button">Abandon this entirely</button>

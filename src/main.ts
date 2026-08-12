@@ -10,7 +10,9 @@ import {
   cycleTarget,
   fireFlintlock,
   getCaptain,
+  getCurrentMap,
   getInteractionLabel,
+  inspectMapPoint,
   interact,
   moveCaptain,
   reloadFlintlock,
@@ -18,8 +20,19 @@ import {
   useSmellingSalts,
   waitTurn,
 } from "./game/game";
-import type { Background, CaptainConfig, Coat, GameState, Knack, RepairPart } from "./game/types";
-import { createRenderer } from "./render";
+import type { MapInspection } from "./game/game";
+import type {
+  Background,
+  CaptainConfig,
+  Coat,
+  GameState,
+  Knack,
+  LevelId,
+  Point,
+  RepairPart,
+  Terrain,
+} from "./game/types";
+import { createRenderer, getMapCamera, moveInspectionCursor, worldPointFromClient } from "./render";
 
 const SAVE_KEY = "arghipelago.active-run.v5";
 
@@ -48,8 +61,34 @@ const fireButton = requireElement<HTMLButtonElement>("#fire-button");
 const crewAttackButton = requireElement<HTMLButtonElement>("#crew-attack-button");
 const contextButton = requireElement<HTMLButtonElement>("#context-button");
 const controlsHelp = requireElement<HTMLDetailsElement>(".controls-help");
+const inspectionReadout = requireElement<HTMLElement>("#inspection-readout");
+const inspectionTitle = requireElement<HTMLElement>("#inspection-title");
+const inspectionDetail = requireElement<HTMLElement>("#inspection-detail");
+const touchActionButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("#touch-controls [data-action]"));
 const renderer = createRenderer(canvas);
 let state: GameState | null = null;
+let inspection: { level: LevelId; point: Point; mode: "hover" | "locked" } | null = null;
+
+const TERRAIN_DETAILS: Record<Terrain, string> = {
+  water: "open water, impassable",
+  sand: "sand",
+  grass: "grass",
+  jungle: "dense jungle, blocks sight",
+  rock: "rocky ground, blocks sight",
+  wreck: "the shipwreck",
+  caveWall: "cave wall, impassable and blocks sight",
+  caveFloor: "cave floor",
+  stairsDown: "stairs descending into the cave",
+  stairsUp: "stairs climbing to the surface",
+};
+
+const PICKUP_DETAILS = {
+  mast: "replacement mast",
+  canvas: "sailcloth",
+  pitch: "pitch barrel",
+  ammo: "powder and shot",
+  salts: "smelling salts",
+} as const;
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>'"]/g, (character) => {
@@ -114,10 +153,72 @@ function repairRow(part: RepairPart, label: string): string {
   return `<div class="repair-row ${status}"><span>${marker}</span><span>${label}</span><strong>${status}</strong></div>`;
 }
 
+function inspectionDescription(result: MapInspection): string {
+  if (result.visibility === "unexplored") return "Unexplored.";
+  const details = result.terrain ? [TERRAIN_DETAILS[result.terrain]] : [];
+  for (const actor of result.actors) {
+    if (actor.kind === "captain") details.push(`${actor.name}, captain, ${actor.hp}/${actor.maxHp} vigor`);
+    else if (actor.kind === "crew" || actor.kind === "castaway") {
+      details.push(`${actor.name}, ${actor.role ?? actor.kind}, ${actor.hp}/${actor.maxHp} vigor`);
+    } else {
+      details.push(`${actor.name}, ${actor.alerted ? "alerted" : "unaware"}, ${actor.hp}/${actor.maxHp} vigor`);
+    }
+  }
+  for (const pickup of result.pickups) details.push(`${PICKUP_DETAILS[pickup.type]} here`);
+  const prefix = result.visibility === "remembered" ? "Remembered: " : "Visible: ";
+  return `${prefix}${details.join("; ")}.`;
+}
+
+function renderInspection(): void {
+  if (!state || !inspection || inspection.level !== state.currentLevel) {
+    inspectionReadout.hidden = true;
+    return;
+  }
+  const result = inspectMapPoint(state, inspection.point);
+  if (!result) {
+    inspectionReadout.hidden = true;
+    return;
+  }
+  inspectionReadout.hidden = false;
+  inspectionTitle.textContent = `${inspection.mode === "locked" ? "Inspecting" : "Chart"} ${inspection.point.x},${inspection.point.y}`;
+  inspectionDetail.textContent = inspectionDescription(result);
+}
+
+function setInspection(point: Point, mode: "hover" | "locked"): void {
+  if (!state) return;
+  inspection = { level: state.currentLevel, point, mode };
+  renderInterface();
+}
+
+function endInspection(): void {
+  inspection = null;
+  renderInterface();
+}
+
+function moveInspection(dx: number, dy: number): void {
+  if (!state || inspection?.mode !== "locked") return;
+  inspection.point = moveInspectionCursor(inspection.point, dx, dy, getCurrentMap(state));
+  renderInterface();
+}
+
+function pointFromPointer(event: PointerEvent): Point | null {
+  if (!state) return null;
+  const map = getCurrentMap(state);
+  const player = getCaptain(state);
+  const cursor = inspection?.mode === "locked" ? inspection.point : null;
+  return worldPointFromClient(
+    { x: event.clientX, y: event.clientY },
+    canvas.getBoundingClientRect(),
+    getMapCamera(map, player, cursor),
+    map,
+  );
+}
+
 function renderInterface(): void {
   if (!state) return;
   const player = getCaptain(state);
-  renderer.draw(state);
+  const activeInspection = inspection?.level === state.currentLevel ? inspection : null;
+  renderer.draw(state, activeInspection?.point);
   captainHeading.textContent = `Captain ${player.name}`;
   captainStats.innerHTML = `
     <div class="health-line"><span>VIGOR</span><strong>${healthPips(player.hp, player.maxHp)}</strong><span>${player.hp}/${player.maxHp}</span></div>
@@ -159,8 +260,12 @@ function renderInterface(): void {
     (state.currentLevel === "surface" && player.x === state.caveEntrance.x && player.y === state.caveEntrance.y) ||
     (state.currentLevel === "cave" && player.x === state.caveExit.x && player.y === state.caveExit.y);
   const onWreck = state.currentLevel === "surface" && player.x === state.wreck.x && player.y === state.wreck.y;
-  contextButton.textContent = getInteractionLabel(state);
+  contextButton.textContent = activeInspection?.mode === "locked" ? "Done inspecting" : getInteractionLabel(state);
   contextButton.classList.toggle("context-ready", onStairs || onWreck);
+  for (const button of touchActionButtons) {
+    button.disabled = activeInspection?.mode === "locked" && button !== contextButton;
+  }
+  renderInspection();
   phaseBanner.hidden = state.phase === "playing";
   if (state.phase !== "playing") {
     phaseBanner.innerHTML =
@@ -172,6 +277,7 @@ function renderInterface(): void {
 
 function commitAction(action: () => void): void {
   if (!state || state.phase !== "playing") return;
+  if (inspection?.mode === "hover") inspection = null;
   action();
   save();
   renderInterface();
@@ -179,6 +285,7 @@ function commitAction(action: () => void): void {
 
 function showGame(game: GameState): void {
   state = game;
+  inspection = null;
   setupScreen.hidden = true;
   gameScreen.hidden = false;
   save();
@@ -188,6 +295,7 @@ function showGame(game: GameState): void {
 
 function showSetup(): void {
   state = null;
+  inspection = null;
   gameScreen.hidden = true;
   setupScreen.hidden = false;
   const seedInput = requireElement<HTMLInputElement>("#world-seed");
@@ -198,6 +306,14 @@ function showSetup(): void {
 
 function handleAction(action: string): void {
   if (!state) return;
+  if (action === "interact" && inspection?.mode === "locked") {
+    endInspection();
+    return;
+  }
+  if (action === "interact" && getInteractionLabel(state) === "Inspect map") {
+    setInspection(getCaptain(state), "locked");
+    return;
+  }
   if (action === "wait") commitAction(() => waitTurn(state as GameState));
   else if (action === "reload") commitAction(() => reloadFlintlock(state as GameState));
   else if (action === "salts") commitAction(() => useSmellingSalts(state as GameState));
@@ -280,7 +396,20 @@ document.addEventListener("keydown", (event) => {
   const direction = keypadMovement[event.code] ?? movement[event.key];
   if (direction) {
     event.preventDefault();
-    commitAction(() => moveCaptain(state as GameState, direction[0], direction[1]));
+    if (inspection?.mode === "locked") moveInspection(direction[0], direction[1]);
+    else commitAction(() => moveCaptain(state as GameState, direction[0], direction[1]));
+    return;
+  }
+  if (inspection?.mode === "locked") {
+    if (
+      event.key === "Escape" ||
+      event.key === "Enter" ||
+      event.key.toLowerCase() === "x" ||
+      event.key.toLowerCase() === "e"
+    ) {
+      event.preventDefault();
+      endInspection();
+    }
     return;
   }
   if (event.key === "." || event.key === "5" || event.code === "Numpad5") {
@@ -288,6 +417,7 @@ document.addEventListener("keydown", (event) => {
     handleAction("wait");
   } else if (event.key.toLowerCase() === "r") handleAction("reload");
   else if (event.key.toLowerCase() === "s") handleAction("salts");
+  else if (event.key.toLowerCase() === "x") setInspection(getCaptain(state), "locked");
   else if (event.key === ">" || event.key === "<") commitAction(() => useStairs(state as GameState));
   else if (event.key.toLowerCase() === "e") handleAction("interact");
   else if (event.key.toLowerCase() === "f") handleAction(state.targetId === null ? "target-next" : "fire");
@@ -308,8 +438,29 @@ requireElement<HTMLElement>("#touch-controls").addEventListener("click", (event)
   if (!button || !state) return;
   if (button.dataset.move) {
     const [dx, dy] = button.dataset.move.split(",").map(Number);
-    if (dx !== undefined && dy !== undefined) commitAction(() => moveCaptain(state as GameState, dx, dy));
+    if (dx !== undefined && dy !== undefined) {
+      if (inspection?.mode === "locked") moveInspection(dx, dy);
+      else commitAction(() => moveCaptain(state as GameState, dx, dy));
+    }
   } else if (button.dataset.action) handleAction(button.dataset.action);
+});
+
+canvas.addEventListener("pointermove", (event) => {
+  if (event.pointerType === "touch" || inspection?.mode === "locked") return;
+  const point = pointFromPointer(event);
+  if (point) setInspection(point, "hover");
+});
+
+canvas.addEventListener("pointerleave", () => {
+  if (inspection?.mode === "hover") endInspection();
+});
+
+canvas.addEventListener("pointerdown", (event) => {
+  const point = pointFromPointer(event);
+  if (!point) return;
+  event.preventDefault();
+  setInspection(point, "locked");
+  canvas.focus();
 });
 
 const initialSave = loadSave();

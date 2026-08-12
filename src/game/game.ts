@@ -11,6 +11,7 @@ import type {
   PickupType,
   Point,
   RepairPart,
+  Terrain,
 } from "./types";
 import { generateCave, generateIsland, inBounds, isPassableTerrain, lineBetween, mapLevel, tileIndex } from "./world";
 
@@ -57,6 +58,13 @@ const ENEMY_NAMES: Record<EnemyType, string[]> = {
   slag: ["Smouldering Slag", "Bilge Slag", "Sulky Slag"],
   bonegunner: ["Skeleton Fusilier", "Dead-Eye Dead Ned", "Powder-Dry Corpse"],
 };
+
+export interface MapInspection {
+  visibility: "unexplored" | "remembered" | "visible";
+  terrain: Terrain | null;
+  actors: Actor[];
+  pickups: Pickup[];
+}
 
 function distance(a: Point, b: Point): number {
   return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
@@ -133,6 +141,36 @@ export function updateVisibility(state: GameState): void {
     state.caveDiscovered = true;
     addMessage(state, "You discover the cave entrance. It appears to have been expecting you.");
   }
+}
+
+export function inspectMapPoint(state: GameState, point: Point): MapInspection | null {
+  const map = currentMap(state);
+  if (!inBounds(point.x, point.y, map.width, map.height)) return null;
+  const tile = map.tiles[tileIndex(point.x, point.y, map.width)];
+  if (!tile?.explored) {
+    return { visibility: "unexplored", terrain: null, actors: [], pickups: [] };
+  }
+  const visible = tile.visible;
+  return {
+    visibility: visible ? "visible" : "remembered",
+    terrain: tile.terrain,
+    actors: visible
+      ? state.actors.filter(
+          (actor) =>
+            actor.alive &&
+            actor.level === state.currentLevel &&
+            actor.x === point.x &&
+            actor.y === point.y,
+        )
+      : [],
+    pickups: state.pickups.filter(
+      (pickup) =>
+        !pickup.collected &&
+        pickup.level === state.currentLevel &&
+        pickup.x === point.x &&
+        pickup.y === point.y,
+    ),
+  };
 }
 
 function takePlacement(pool: Point[], rng: Rng, predicate: (point: Point) => boolean): Point {
@@ -796,7 +834,7 @@ export function getInteractionLabel(state: GameState): string {
     const part = nextRecoveredRepair(state);
     return part ? `Fit ${REPAIR_LABELS[part]}` : "Inspect wreck";
   }
-  return "Inspect surroundings";
+  return "Inspect map";
 }
 
 export function interact(state: GameState): boolean {
