@@ -207,51 +207,52 @@ function carveCorridor(tiles: Tile[], from: Point, to: Point, width: number, hei
 export function generateCave(seed: string): GeneratedCave {
   const width = CAVE_WIDTH;
   const height = CAVE_HEIGHT;
-  const rng = new Rng(`${seed}:cave`);
-  const tiles: Tile[] = Array.from({ length: width * height }, () => ({
-    terrain: "caveWall" as const,
-    explored: false,
-    visible: false,
-  }));
-  const rooms: Room[] = [];
+  for (let layoutAttempt = 0; layoutAttempt < 8; layoutAttempt += 1) {
+    const rng = new Rng(layoutAttempt === 0 ? `${seed}:cave` : `${seed}:cave:${layoutAttempt}`);
+    const tiles: Tile[] = Array.from({ length: width * height }, () => ({
+      terrain: "caveWall" as const,
+      explored: false,
+      visible: false,
+    }));
+    const rooms: Room[] = [];
 
-  for (let attempt = 0; attempt < 80 && rooms.length < 11; attempt += 1) {
-    const roomWidth = 5 + rng.int(7);
-    const roomHeight = 4 + rng.int(5);
-    const x = 2 + rng.int(width - roomWidth - 4);
-    const y = 2 + rng.int(height - roomHeight - 4);
-    const room: Room = {
-      x,
-      y,
-      width: roomWidth,
-      height: roomHeight,
-      center: { x: x + Math.floor(roomWidth / 2), y: y + Math.floor(roomHeight / 2) },
-    };
-    const overlaps = rooms.some(
-      (other) =>
-        room.x - 2 <= other.x + other.width &&
-        room.x + room.width + 2 >= other.x &&
-        room.y - 2 <= other.y + other.height &&
-        room.y + room.height + 2 >= other.y,
-    );
-    if (overlaps) continue;
-    for (let roomY = room.y; roomY < room.y + room.height; roomY += 1) {
-      for (let roomX = room.x; roomX < room.x + room.width; roomX += 1) {
-        carveFloor(tiles, roomX, roomY, width, height);
+    for (let attempt = 0; attempt < 80 && rooms.length < 11; attempt += 1) {
+      const roomWidth = 5 + rng.int(7);
+      const roomHeight = 4 + rng.int(5);
+      const x = 2 + rng.int(width - roomWidth - 4);
+      const y = 2 + rng.int(height - roomHeight - 4);
+      const room: Room = {
+        x,
+        y,
+        width: roomWidth,
+        height: roomHeight,
+        center: { x: x + Math.floor(roomWidth / 2), y: y + Math.floor(roomHeight / 2) },
+      };
+      const overlaps = rooms.some(
+        (other) =>
+          room.x - 2 <= other.x + other.width &&
+          room.x + room.width + 2 >= other.x &&
+          room.y - 2 <= other.y + other.height &&
+          room.y + room.height + 2 >= other.y,
+      );
+      if (overlaps) continue;
+      for (let roomY = room.y; roomY < room.y + room.height; roomY += 1) {
+        for (let roomX = room.x; roomX < room.x + room.width; roomX += 1) {
+          carveFloor(tiles, roomX, roomY, width, height);
+        }
       }
+      const previous = rooms[rooms.length - 1];
+      if (previous) carveCorridor(tiles, previous.center, room.center, width, height, rng.chance(0.5));
+      rooms.push(room);
     }
-    const previous = rooms[rooms.length - 1];
-    if (previous) carveCorridor(tiles, previous.center, room.center, width, height, rng.chance(0.5));
-    rooms.push(room);
+    const exit = rooms[0]?.center;
+    if (rooms.length < 5 || !exit) continue;
+    const exitTile = tiles[tileIndex(exit.x, exit.y, width)];
+    if (exitTile) exitTile.terrain = "stairsUp";
+    const reachable = collectComponent(tiles, exit, width, height);
+    return { width, height, tiles, exit, reachable, rngState: rng.state };
   }
-  if (rooms.length < 5) throw new Error("Cave generation produced too few chambers.");
-
-  const exit = rooms[0]?.center;
-  if (!exit) throw new Error("Cave generation did not create an exit.");
-  const exitTile = tiles[tileIndex(exit.x, exit.y, width)];
-  if (exitTile) exitTile.terrain = "stairsUp";
-  const reachable = collectComponent(tiles, exit, width, height);
-  return { width, height, tiles, exit, reachable, rngState: rng.state };
+  throw new Error("Cave generation produced too few chambers.");
 }
 
 export function mapLevel(id: MapLevel["id"], width: number, height: number, tiles: Tile[]): MapLevel {

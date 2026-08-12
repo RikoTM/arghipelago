@@ -425,6 +425,14 @@ canvas:focus-visible {
   align-self: center;
 }
 
+.crew-row.incapacitated {
+  color: var(--red);
+}
+
+.crew-row.incapacitated span:last-child {
+  font-weight: 700;
+}
+
 .message-panel {
   min-height: 210px;
   color: #ddd0af;

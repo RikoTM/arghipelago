@@ -57,6 +57,7 @@ export interface Actor extends Point {
   maxHp: number;
   melee: number;
   alive: boolean;
+  incapacitatedTurns: number;
   alerted: boolean;
   alertTurns: number;
 }
@@ -75,7 +76,7 @@ export interface Inventory {
 }
 
 export interface GameState {
-  version: 5;
+  version: 6;
   seed: string;
   rngState: number;
   levels: Record<LevelId, MapLevel>;

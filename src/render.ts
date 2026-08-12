@@ -1,5 +1,5 @@
 import { coordinateNoise } from "./game/rng";
-import { getCaptain, getCurrentMap, isEnemyConcealed } from "./game/game";
+import { getCaptain, getCurrentMap, isEnemyConcealed, isIncapacitated } from "./game/game";
 import type { Actor, Coat, GameState, MapLevel, PickupType, Point, Terrain } from "./game/types";
 import { tileIndex } from "./game/world";
 
@@ -20,7 +20,7 @@ const COAT_COLORS: Record<Coat, string> = {
   moss: "#56604b",
 };
 
-type SpriteKind = Terrain | PickupType | "captain" | "crew" | "castaway" | "skeleton" | "crab" | "slag" | "bonegunner";
+type SpriteKind = Terrain | PickupType | "captain" | "crew" | "crewDown" | "castaway" | "skeleton" | "crab" | "slag" | "bonegunner";
 
 export interface Renderer {
   draw(state: GameState, cursor?: Point | null): void;
@@ -243,6 +243,23 @@ function drawSkeleton(context: CanvasRenderingContext2D, armed: boolean): void {
   if (armed) inkLine(context, [[21, 17], [31, 14]], 3);
 }
 
+function drawDownedCrew(context: CanvasRenderingContext2D): void {
+  context.fillStyle = "#585a50";
+  context.beginPath();
+  context.ellipse(18, 23, 11, 5, -0.15, 0, Math.PI * 2);
+  context.fill();
+  context.strokeStyle = INK;
+  context.lineWidth = 2;
+  context.stroke();
+  context.fillStyle = PAPER;
+  context.beginPath();
+  context.arc(7, 22, 4, 0, Math.PI * 2);
+  context.fill();
+  context.stroke();
+  inkLine(context, [[10, 21], [27, 16]], 2);
+  inkLine(context, [[16, 25], [26, 29]], 2);
+}
+
 function drawCreature(context: CanvasRenderingContext2D, kind: "crab" | "slag"): void {
   if (kind === "crab") {
     context.fillStyle = "#a78e73";
@@ -331,6 +348,7 @@ function makeSprite(kind: SpriteKind, coat: Coat): HTMLCanvasElement {
     drawTerrain(context, kind as Terrain);
   } else if (kind === "captain") drawPerson(context, COAT_COLORS[coat]);
   else if (kind === "crew") drawPerson(context, "#585a50", false);
+  else if (kind === "crewDown") drawDownedCrew(context);
   else if (kind === "castaway") drawPerson(context, "#8b8069", false);
   else if (kind === "skeleton") drawSkeleton(context, false);
   else if (kind === "bonegunner") drawSkeleton(context, true);
@@ -340,6 +358,7 @@ function makeSprite(kind: SpriteKind, coat: Coat): HTMLCanvasElement {
 }
 
 function actorSprite(actor: Actor): SpriteKind {
+  if (isIncapacitated(actor)) return "crewDown";
   if (actor.kind !== "enemy") return actor.kind;
   return actor.enemyType ?? "skeleton";
 }
@@ -404,9 +423,12 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
       );
     }
 
-    for (const actor of state.actors) {
+    const drawableActors = state.actors
+      .filter((actor) => actor.alive && actor.level === state.currentLevel && !isEnemyConcealed(actor))
+      .sort((a, b) => Number(isIncapacitated(b)) - Number(isIncapacitated(a)));
+    for (const actor of drawableActors) {
       const tile = map.tiles[tileIndex(actor.x, actor.y, map.width)];
-      if (!actor.alive || actor.level !== state.currentLevel || isEnemyConcealed(actor) || !tile?.visible) continue;
+      if (!tile?.visible) continue;
       const screenX = (actor.x - cameraX) * TILE_SIZE;
       const screenY = (actor.y - cameraY) * TILE_SIZE;
       if (actor.id === state.targetId) {

@@ -47,7 +47,7 @@ Tests exercise deterministic game creation and validate connected procedural ter
 - `Tab`: cycle visible targets
 - `Enter`: fire at the selected target
 - `R`: reload the flintlock
-- `S`: consume smelling salts to restore vigor
+- `S`: use smelling salts to rescue adjacent crew or restore vigor
 - `C`: cycle crew orders
 - `A`: order crew to attack the selected target
 - `E`: interact with the wreck or cave stairs

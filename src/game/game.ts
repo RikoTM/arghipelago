@@ -26,6 +26,8 @@ const DIRECTIONS: Point[] = [
   { x: 1, y: 1 },
 ];
 
+const INCAPACITATION_TURNS = 10;
+
 const REPAIR_NAMES: Record<RepairPart, string> = {
   mast: "a mast that is less horizontal than the current one",
   canvas: "enough sailcloth to alarm a modest tent",
@@ -70,6 +72,14 @@ export function isEnemyConcealed(actor: Actor): boolean {
   return actor.kind === "enemy" && actor.enemyType === "crab" && !actor.alerted;
 }
 
+export function isIncapacitated(actor: Actor): boolean {
+  return actor.alive && actor.kind === "crew" && actor.incapacitatedTurns > 0;
+}
+
+function canAct(actor: Actor): boolean {
+  return actor.alive && !isIncapacitated(actor);
+}
+
 function distance(a: Point, b: Point): number {
   return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 }
@@ -91,7 +101,13 @@ function currentMap(state: GameState): MapLevel {
 function actorAt(state: GameState, x: number, y: number, ignoreId?: number): Actor | undefined {
   return state.actors.find(
     (actor) =>
-      actor.alive && actor.level === state.currentLevel && actor.id !== ignoreId && actor.x === x && actor.y === y,
+      canAct(actor) && actor.level === state.currentLevel && actor.id !== ignoreId && actor.x === x && actor.y === y,
+  );
+}
+
+function livingActorAt(state: GameState, x: number, y: number): Actor | undefined {
+  return state.actors.find(
+    (actor) => actor.alive && actor.level === state.currentLevel && actor.x === x && actor.y === y,
   );
 }
 
@@ -203,6 +219,7 @@ function makeEnemy(id: number, type: EnemyType, point: Point, rng: Rng, level: L
     maxHp: health,
     melee,
     alive: true,
+    incapacitatedTurns: 0,
     alerted: false,
     alertTurns: 0,
   };
@@ -231,6 +248,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       maxHp: 16 + privateerHealth,
       melee: 2,
       alive: true,
+      incapacitatedTurns: 0,
       alerted: true,
       alertTurns: 0,
     },
@@ -252,6 +270,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       maxHp: 8,
       melee: recruit.melee,
       alive: true,
+      incapacitatedTurns: 0,
       alerted: false,
       alertTurns: 0,
     });
@@ -303,7 +322,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
   }
 
   const state: GameState = {
-    version: 5,
+    version: 6,
     seed,
     rngState: rng.state,
     levels: {
@@ -340,6 +359,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
 }
 
 function damageActor(state: GameState, target: Actor, amount: number, sourceName: string): void {
+  if (!target.alive || isIncapacitated(target)) return;
   target.hp -= amount;
   addMessage(state, `${sourceName} hits ${target.name} for ${amount}.`);
   if (target.hp > 0) return;
@@ -356,13 +376,17 @@ function damageActor(state: GameState, target: Actor, amount: number, sourceName
     }
     state.phase = "lost";
     addMessage(state, `Captain ${target.name} dies. The island declines to apologize.`);
+  } else if (target.kind === "crew") {
+    target.alive = true;
+    target.incapacitatedTurns = INCAPACITATION_TURNS + 1;
+    addMessage(state, `${target.name} is incapacitated. Smelling salts may yet settle the argument.`);
   } else {
     addMessage(state, `${target.name} is killed.`);
     if (target.id === state.targetId) state.targetId = null;
     if (target.kind === "enemy" && target.enemyType === "slag") {
       addMessage(state, `${target.name} bursts in a ring of furnace-hot embers.`);
       for (const actor of state.actors) {
-        if (actor.alive && actor.level === target.level && distance(actor, target) <= 1) {
+        if (canAct(actor) && actor.level === target.level && distance(actor, target) <= 1) {
           damageActor(state, actor, 2, `${target.name}'s fiery collapse`);
         }
       }
@@ -496,7 +520,7 @@ function runCrewTurns(state: GameState, rng: Rng): void {
     addMessage(state, "The crew's target is no longer available. They resume following.");
   }
   for (const crew of state.actors.filter(
-    (actor) => actor.alive && actor.level === state.currentLevel && actor.kind === "crew",
+    (actor) => canAct(actor) && actor.level === state.currentLevel && actor.kind === "crew",
   )) {
     if (orderedTarget?.alive) {
       if (distance(crew, orderedTarget) <= 1) meleeAttack(state, crew, orderedTarget, rng);
@@ -535,7 +559,7 @@ function runEnemyTurns(state: GameState, rng: Rng): void {
       (actor) =>
         actor.alive &&
         actor.level === state.currentLevel &&
-        (actor.kind === "captain" || actor.kind === "crew"),
+        (actor.kind === "captain" || (actor.kind === "crew" && !isIncapacitated(actor))),
     );
 
   for (const enemy of state.actors.filter(
@@ -599,7 +623,7 @@ function spawnEscalation(state: GameState, rng: Rng): void {
         tile &&
         isPassableTerrain(tile.terrain) &&
         !tile.visible &&
-        !actorAt(state, x, y) &&
+        !livingActorAt(state, x, y) &&
         distance(player, { x, y }) > 9
       ) {
         candidates.push({ x, y });
@@ -644,6 +668,13 @@ function finishTurn(state: GameState, noise = 0): void {
   if (state.phase === "playing") {
     collectAtCaptain(state);
     recruitNearby(state);
+  }
+  for (const crew of state.actors.filter(isIncapacitated)) {
+    crew.incapacitatedTurns -= 1;
+    if (crew.incapacitatedTurns === 0) {
+      crew.alive = false;
+      addMessage(state, `${crew.name} dies before the crew can revive them.`);
+    }
   }
   updateVisibility(state);
 }
@@ -739,6 +770,24 @@ export function reloadFlintlock(state: GameState): boolean {
 export function useSmellingSalts(state: GameState): boolean {
   if (state.phase !== "playing") return false;
   const player = captain(state);
+  const rescue = state.actors
+    .filter(
+      (actor) => isIncapacitated(actor) && actor.level === state.currentLevel && distance(player, actor) <= 1,
+    )
+    .sort((a, b) => a.incapacitatedTurns - b.incapacitatedTurns || a.id - b.id)[0];
+  if (rescue) {
+    if (state.inventory.salts <= 0) {
+      addMessage(state, `${rescue.name} needs smelling salts, and the bottle is regrettably empty.`);
+      return false;
+    }
+    const healing = state.captainConfig.background === "surgeon" ? 5 : 3;
+    state.inventory.salts -= 1;
+    rescue.hp = healing;
+    rescue.incapacitatedTurns = 0;
+    addMessage(state, `${rescue.name} returns to duty with ${healing} vigor and a profound dislike of medicine.`);
+    finishTurn(state);
+    return true;
+  }
   if (player.hp >= player.maxHp) {
     addMessage(state, "The captain is already offensively vigorous.");
     return false;
@@ -808,7 +857,7 @@ export function fireFlintlock(state: GameState): boolean {
   }
 
   const interveningCrew = state.actors.find((actor) => {
-    if (!actor.alive || actor.level !== state.currentLevel || actor.kind !== "crew") return false;
+    if (!canAct(actor) || actor.level !== state.currentLevel || actor.kind !== "crew") return false;
     return lineBetween(player, target as Actor).slice(1, -1).some((point) => point.x === actor.x && point.y === actor.y);
   });
   if (interveningCrew) {
@@ -833,7 +882,7 @@ const ORDER_SEQUENCE: CrewOrder[] = ["follow", "hold", "rally"];
 
 export function cycleCrewOrder(state: GameState): CrewOrder {
   const crewCount = state.actors.filter(
-    (actor) => actor.alive && actor.level === state.currentLevel && actor.kind === "crew",
+    (actor) => canAct(actor) && actor.level === state.currentLevel && actor.kind === "crew",
   ).length;
   if (crewCount === 0) {
     addMessage(state, "You issue a crisp order to nobody in particular.");
@@ -850,7 +899,7 @@ export function cycleCrewOrder(state: GameState): CrewOrder {
 export function commandCrewAttack(state: GameState): boolean {
   if (state.phase !== "playing") return false;
   const crewCount = state.actors.filter(
-    (actor) => actor.alive && actor.level === state.currentLevel && actor.kind === "crew",
+    (actor) => canAct(actor) && actor.level === state.currentLevel && actor.kind === "crew",
   ).length;
   if (crewCount === 0) {
     addMessage(state, "There is no crew here to receive an attack order.");
@@ -959,6 +1008,7 @@ export function useStairs(state: GameState): boolean {
       actor.alive &&
       actor.level === state.currentLevel &&
       (actor.kind === "captain" || actor.kind === "crew") &&
+      !isIncapacitated(actor) &&
       (actor.kind === "captain" || state.crewOrder !== "hold"),
   );
   state.currentLevel = destinationLevel;

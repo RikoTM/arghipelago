@@ -14,6 +14,7 @@ import {
   getInteractionLabel,
   inspectMapPoint,
   interact,
+  isIncapacitated,
   moveCaptain,
   reloadFlintlock,
   useStairs,
@@ -35,7 +36,7 @@ import type {
 } from "./game/types";
 import { createRenderer, getMapCamera, moveInspectionCursor, worldPointFromClient } from "./render";
 
-const SAVE_KEY = "arghipelago.active-run.v5";
+const SAVE_KEY = "arghipelago.active-run.v6";
 
 function requireElement<T extends HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -120,10 +121,18 @@ function loadSave(): GameState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GameState>;
     if (
-      parsed.version !== 5 ||
+      parsed.version !== 6 ||
       !parsed.levels?.surface ||
       !parsed.levels.cave ||
       !Array.isArray(parsed.actors) ||
+      parsed.actors.some(
+        (actor) =>
+          !Number.isInteger(actor.incapacitatedTurns) ||
+          actor.incapacitatedTurns < 0 ||
+          actor.incapacitatedTurns > 10 ||
+          (actor.incapacitatedTurns > 0 && (actor.kind !== "crew" || !actor.alive || actor.hp !== 0)) ||
+          (actor.kind === "crew" && actor.alive && actor.hp === 0 && actor.incapacitatedTurns === 0),
+      ) ||
       !parsed.recoveredParts ||
       !parsed.repairs
     ) return null;
@@ -166,7 +175,9 @@ function inspectionDescription(result: MapInspection): string {
   const details = result.terrain ? [TERRAIN_DETAILS[result.terrain]] : [];
   for (const actor of result.actors) {
     if (actor.kind === "captain") details.push(`${actor.name}, captain, ${actor.hp}/${actor.maxHp} vigor`);
-    else if (actor.kind === "crew" || actor.kind === "castaway") {
+    else if (isIncapacitated(actor)) {
+      details.push(`${actor.name}, incapacitated, ${actor.incapacitatedTurns} turns to rescue`);
+    } else if (actor.kind === "crew" || actor.kind === "castaway") {
       details.push(`${actor.name}, ${actor.role ?? actor.kind}, ${actor.hp}/${actor.maxHp} vigor`);
     } else {
       const tactic = actor.enemyType ? ENEMY_TACTICS[actor.enemyType] : "hostile";
@@ -252,8 +263,12 @@ function renderInterface(): void {
   crewList.innerHTML = crew.length
     ? crew
         .map(
-          (member) =>
-            `<div class="crew-row"><strong>${escapeHtml(member.name)}</strong><span>${escapeHtml(member.role ?? "Pirate")}</span><span>${member.hp}/${member.maxHp} vigor</span></div>`,
+          (member) => {
+            const status = isIncapacitated(member)
+              ? `Incapacitated: ${member.incapacitatedTurns} turns`
+              : `${member.hp}/${member.maxHp} vigor`;
+            return `<div class="crew-row ${isIncapacitated(member) ? "incapacitated" : ""}"><strong>${escapeHtml(member.name)}</strong><span>${escapeHtml(member.role ?? "Pirate")}</span><span>${status}</span></div>`;
+          },
         )
         .join("")
     : "<p>Currently between crews. Search the island for survivors.</p>";

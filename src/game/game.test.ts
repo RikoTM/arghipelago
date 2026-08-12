@@ -90,6 +90,10 @@ describe("island generation", () => {
       expect(state.actors.filter((actor) => actor.kind === "castaway")).toHaveLength(3);
     }
   });
+
+  it("finishes cave placement for seeds that need additional attempts", () => {
+    expect(generateCave("step-over-crew").reachable.length).toBeGreaterThan(150);
+  });
 });
 
 describe("game simulation", () => {
@@ -100,7 +104,7 @@ describe("game simulation", () => {
   it("round-trips the complete active run through JSON storage", () => {
     const state = createGame(captain, "save-round-trip");
     const restored = JSON.parse(JSON.stringify(state)) as typeof state;
-    expect(restored.version).toBe(5);
+    expect(restored.version).toBe(6);
     expect(restored).toEqual(state);
     expect(restored.levels.cave.tiles).toHaveLength(state.levels.cave.width * state.levels.cave.height);
   });
@@ -307,6 +311,144 @@ describe("game simulation", () => {
     state.inventory.salts = 0;
     expect(useSmellingSalts(state)).toBe(false);
     expect(state.turn).toBe(0);
+  });
+
+  it("incapacitates crew for ten rescue turns instead of killing them immediately", () => {
+    const state = createGame(captain, "crew-incapacitation");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    const slag = state.actors.find((actor) => actor.enemyType === "slag" && actor.level === "surface");
+    expect(crew).toBeDefined();
+    expect(slag).toBeDefined();
+    if (!crew || !slag) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== slag.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    crew.kind = "crew";
+    crew.x = 21;
+    crew.y = 21;
+    crew.hp = 1;
+    slag.x = 21;
+    slag.y = 20;
+    slag.hp = 1;
+    slag.alerted = true;
+
+    expect(moveCaptain(state, 1, 0)).toBe(true);
+
+    expect(crew).toMatchObject({ alive: true, hp: 0, incapacitatedTurns: 10 });
+    expect(inspectMapPoint(state, crew)?.actors).toContain(crew);
+  });
+
+  it("counts down incapacitated crew on later turns and makes death permanent", () => {
+    const state = createGame(captain, "crew-bleed-out");
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    expect(crew).toBeDefined();
+    if (!crew) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    crew.kind = "crew";
+    crew.hp = 0;
+    crew.incapacitatedTurns = 10;
+
+    waitTurn(state);
+    expect(crew.incapacitatedTurns).toBe(9);
+    for (let turn = 0; turn < 9; turn += 1) waitTurn(state);
+
+    expect(crew).toMatchObject({ alive: false, hp: 0, incapacitatedTurns: 0 });
+  });
+
+  it("uses salts on the most urgent adjacent crew member before healing the captain", () => {
+    const state = createGame(captain, "crew-field-rescue");
+    const player = getCaptain(state);
+    const crew = state.actors.filter((actor) => actor.kind === "castaway").slice(0, 2);
+    const urgent = crew[0];
+    const stable = crew[1];
+    expect(urgent).toBeDefined();
+    expect(stable).toBeDefined();
+    if (!urgent || !stable) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    player.hp -= 6;
+    urgent.kind = "crew";
+    urgent.x = player.x + 1;
+    urgent.y = player.y;
+    urgent.hp = 0;
+    urgent.incapacitatedTurns = 2;
+    stable.kind = "crew";
+    stable.x = player.x;
+    stable.y = player.y + 1;
+    stable.hp = 0;
+    stable.incapacitatedTurns = 7;
+    const captainHealth = player.hp;
+
+    expect(useSmellingSalts(state)).toBe(true);
+
+    expect(urgent).toMatchObject({ hp: 3, incapacitatedTurns: 0 });
+    expect(stable).toMatchObject({ hp: 0, incapacitatedTurns: 6 });
+    expect(player.hp).toBe(captainHealth);
+    expect(state.inventory.salts).toBe(0);
+    expect(state.turn).toBe(1);
+  });
+
+  it("gives surgeons stronger crew rescues", () => {
+    const state = createGame({ ...captain, background: "surgeon" }, "surgeon-rescue");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    expect(crew).toBeDefined();
+    if (!crew) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    crew.kind = "crew";
+    crew.x = player.x + 1;
+    crew.y = player.y;
+    crew.hp = 0;
+    crew.incapacitatedTurns = 1;
+
+    expect(useSmellingSalts(state)).toBe(true);
+    expect(crew).toMatchObject({ hp: 5, incapacitatedTurns: 0, alive: true });
+  });
+
+  it("lets the captain move through downed crew without making them act", () => {
+    const state = createGame(captain, "step-over-crew");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    expect(crew).toBeDefined();
+    if (!crew) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    const destination = state.levels.surface.tiles[tileIndex(player.x + 1, player.y, state.levels.surface.width)];
+    expect(destination).toBeDefined();
+    if (!destination) return;
+    destination.terrain = "grass";
+    crew.kind = "crew";
+    crew.x = player.x + 1;
+    crew.y = player.y;
+    crew.hp = 0;
+    crew.incapacitatedTurns = 10;
+
+    expect(moveCaptain(state, 1, 0)).toBe(true);
+    expect(player).toMatchObject({ x: crew.x, y: crew.y });
+    expect(crew).toMatchObject({ hp: 0, incapacitatedTurns: 9 });
+  });
+
+  it("leaves downed crew behind on stairs while their rescue timer continues", () => {
+    const state = createGame(captain, "abandoned-crew");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    expect(crew).toBeDefined();
+    if (!crew) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    player.x = state.caveEntrance.x;
+    player.y = state.caveEntrance.y;
+    crew.kind = "crew";
+    crew.level = "surface";
+    crew.x = player.x;
+    crew.y = player.y;
+    crew.hp = 0;
+    crew.incapacitatedTurns = 10;
+
+    expect(useStairs(state)).toBe(true);
+    expect(player.level).toBe("cave");
+    expect(crew).toMatchObject({ level: "surface", incapacitatedTurns: 9 });
   });
 
   it("provides a quiet opening instead of globally alerting the island", () => {
