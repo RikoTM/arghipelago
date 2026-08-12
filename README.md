@@ -40,15 +40,17 @@ Tests exercise deterministic game creation and validate connected procedural ter
 
 ## Controls
 
-- Arrow keys or `HJKL`: cardinal movement
-- `YUBN`: diagonal movement
-- `.` or `5`: wait
+- Arrow keys, `HJKL`, or keypad `8/4/2/6`: cardinal movement
+- `YUBN` or keypad `7/9/1/3`: diagonal movement
+- `.` or keypad `5`: wait
 - `F`: select a target or fire at the selected target
 - `Tab`: cycle visible targets
 - `Enter`: fire at the selected target
 - `R`: reload the flintlock
 - `C`: cycle crew orders
-- `>` or `E`: use cave stairs
+- `E`: interact with the wreck or cave stairs
+- `>`: use cave stairs
+- `?`: toggle controls
 - `Escape`: cancel targeting
 
 Touch controls appear on mobile and other coarse-pointer devices.

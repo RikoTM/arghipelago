@@ -9,6 +9,8 @@ import {
   cycleTarget,
   fireFlintlock,
   getCaptain,
+  getInteractionLabel,
+  interact,
   moveCaptain,
   reloadFlintlock,
   useStairs,
@@ -17,7 +19,7 @@ import {
 import type { Background, CaptainConfig, Coat, GameState, Knack, RepairPart } from "./game/types";
 import { createRenderer } from "./render";
 
-const SAVE_KEY = "arghipelago.active-run.v3";
+const SAVE_KEY = "arghipelago.active-run.v4";
 
 function requireElement<T extends HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -42,6 +44,7 @@ const messageLog = requireElement<HTMLElement>("#message-log");
 const phaseBanner = requireElement<HTMLElement>("#phase-banner");
 const fireButton = requireElement<HTMLButtonElement>("#fire-button");
 const contextButton = requireElement<HTMLButtonElement>("#context-button");
+const controlsHelp = requireElement<HTMLDetailsElement>(".controls-help");
 const renderer = createRenderer(canvas);
 let state: GameState | null = null;
 
@@ -67,10 +70,12 @@ function loadSave(): GameState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GameState>;
     if (
-      parsed.version !== 3 ||
+      parsed.version !== 4 ||
       !parsed.levels?.surface ||
       !parsed.levels.cave ||
-      !Array.isArray(parsed.actors)
+      !Array.isArray(parsed.actors) ||
+      !parsed.recoveredParts ||
+      !parsed.repairs
     ) return null;
     return parsed as GameState;
   } catch {
@@ -101,9 +106,9 @@ function compassDirection(from: { x: number; y: number }, to: { x: number; y: nu
 
 function repairRow(part: RepairPart, label: string): string {
   if (!state) return "";
-  return `<div class="repair-row ${state.repairs[part] ? "complete" : ""}"><span>${
-    state.repairs[part] ? "[x]" : "[ ]"
-  }</span><span>${label}</span></div>`;
+  const status = state.repairs[part] ? "installed" : state.recoveredParts[part] ? "recovered" : "missing";
+  const marker = status === "installed" ? "[x]" : status === "recovered" ? "[+]" : "[ ]";
+  return `<div class="repair-row ${status}"><span>${marker}</span><span>${label}</span><strong>${status}</strong></div>`;
 }
 
 function renderInterface(): void {
@@ -146,10 +151,9 @@ function renderInterface(): void {
   const onStairs =
     (state.currentLevel === "surface" && player.x === state.caveEntrance.x && player.y === state.caveEntrance.y) ||
     (state.currentLevel === "cave" && player.x === state.caveExit.x && player.y === state.caveExit.y);
-  contextButton.textContent = onStairs
-    ? state.currentLevel === "surface" ? "Descend cave" : "Climb outside"
-    : "Use stairs";
-  contextButton.classList.toggle("context-ready", onStairs);
+  const onWreck = state.currentLevel === "surface" && player.x === state.wreck.x && player.y === state.wreck.y;
+  contextButton.textContent = getInteractionLabel(state);
+  contextButton.classList.toggle("context-ready", onStairs || onWreck);
   phaseBanner.hidden = state.phase === "playing";
   if (state.phase !== "playing") {
     phaseBanner.innerHTML =
@@ -198,7 +202,7 @@ function handleAction(action: string): void {
       renderInterface();
     } else commitAction(() => fireFlintlock(state as GameState));
   } else if (action === "order") commitAction(() => cycleCrewOrder(state as GameState));
-  else if (action === "stairs") commitAction(() => useStairs(state as GameState));
+  else if (action === "interact") commitAction(() => interact(state as GameState));
 }
 
 form.addEventListener("submit", (event) => {
@@ -227,6 +231,11 @@ newRunButton.addEventListener("click", () => {
 
 document.addEventListener("keydown", (event) => {
   if (!state || gameScreen.hidden) return;
+  if (event.key === "?") {
+    event.preventDefault();
+    controlsHelp.open = !controlsHelp.open;
+    return;
+  }
   const movement: Record<string, [number, number]> = {
     ArrowUp: [0, -1],
     ArrowDown: [0, 1],
@@ -240,18 +249,37 @@ document.addEventListener("keydown", (event) => {
     u: [1, -1],
     b: [-1, 1],
     n: [1, 1],
+    "1": [-1, 1],
+    "2": [0, 1],
+    "3": [1, 1],
+    "4": [-1, 0],
+    "6": [1, 0],
+    "7": [-1, -1],
+    "8": [0, -1],
+    "9": [1, -1],
   };
-  const direction = movement[event.key];
+  const keypadMovement: Record<string, [number, number]> = {
+    Numpad1: [-1, 1],
+    Numpad2: [0, 1],
+    Numpad3: [1, 1],
+    Numpad4: [-1, 0],
+    Numpad6: [1, 0],
+    Numpad7: [-1, -1],
+    Numpad8: [0, -1],
+    Numpad9: [1, -1],
+  };
+  const direction = keypadMovement[event.code] ?? movement[event.key];
   if (direction) {
     event.preventDefault();
     commitAction(() => moveCaptain(state as GameState, direction[0], direction[1]));
     return;
   }
-  if (event.key === "." || event.key === "5") {
+  if (event.key === "." || event.key === "5" || event.code === "Numpad5") {
     event.preventDefault();
     handleAction("wait");
   } else if (event.key.toLowerCase() === "r") handleAction("reload");
-  else if (event.key === ">" || event.key === "<" || event.key.toLowerCase() === "e") handleAction("stairs");
+  else if (event.key === ">" || event.key === "<") commitAction(() => useStairs(state as GameState));
+  else if (event.key.toLowerCase() === "e") handleAction("interact");
   else if (event.key.toLowerCase() === "f") handleAction(state.targetId === null ? "target-next" : "fire");
   else if (event.key.toLowerCase() === "c") handleAction("order");
   else if (event.key === "Tab") {

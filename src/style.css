@@ -332,12 +332,28 @@ canvas {
 }
 
 .repair-row {
-  justify-content: start;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   padding: 3px 0;
 }
 
-.repair-row.complete {
+.repair-row strong {
+  color: #625b4d;
+  font-family: "Special Elite", monospace;
+  font-size: 0.62rem;
+  font-weight: 400;
+  text-transform: uppercase;
+}
+
+.repair-row.recovered {
+  font-weight: 700;
+}
+
+.repair-row.installed {
   color: #53604c;
+}
+
+.repair-row.installed > span:nth-child(2) {
   text-decoration: line-through;
 }
 

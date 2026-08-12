@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { createGame, fireFlintlock, getCaptain, moveCaptain, updateVisibility, useStairs, waitTurn } from "./game";
+import {
+  createGame,
+  fireFlintlock,
+  getCaptain,
+  getInteractionLabel,
+  interact,
+  moveCaptain,
+  updateVisibility,
+  useStairs,
+  waitTurn,
+} from "./game";
 import type { CaptainConfig } from "./types";
 import { generateCave, generateIsland, isPassableTerrain, tileIndex } from "./world";
 
@@ -85,8 +95,96 @@ describe("game simulation", () => {
   it("round-trips the complete active run through JSON storage", () => {
     const state = createGame(captain, "save-round-trip");
     const restored = JSON.parse(JSON.stringify(state)) as typeof state;
+    expect(restored.version).toBe(4);
     expect(restored).toEqual(state);
     expect(restored.levels.cave.tiles).toHaveLength(state.levels.cave.width * state.levels.cave.height);
+  });
+
+  it("recovers repair cargo without installing it or granting victory", () => {
+    const state = createGame(captain, "salvage-is-not-shipbuilding");
+    const player = getCaptain(state);
+    const mast = state.pickups.find((pickup) => pickup.type === "mast");
+    expect(mast).toBeDefined();
+    if (!mast) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    player.x = mast.x;
+    player.y = mast.y;
+
+    waitTurn(state);
+
+    expect(mast.collected).toBe(true);
+    expect(state.recoveredParts.mast).toBe(true);
+    expect(state.repairs.mast).toBe(false);
+    expect(state.phase).toBe("playing");
+  });
+
+  it("inspects the wreck without spending a turn when no repair is ready", () => {
+    const state = createGame(captain, "honest-shipwright");
+
+    expect(getInteractionLabel(state)).toBe("Inspect wreck");
+    expect(interact(state)).toBe(false);
+    expect(state.turn).toBe(0);
+    expect(state.messages.at(-1)).toContain("replacement mast missing; search the island");
+    expect(state.messages.at(-1)).toContain("pitch barrel missing; search the cave");
+  });
+
+  it("installs one recovered part per turn and wins only after the final turn resolves", () => {
+    const state = createGame(captain, "three-part-repair");
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    state.recoveredParts = { mast: true, canvas: true, pitch: true };
+
+    expect(getInteractionLabel(state)).toBe("Fit replacement mast");
+    expect(interact(state)).toBe(true);
+    expect(state.repairs).toEqual({ mast: true, canvas: false, pitch: false });
+    expect(state.turn).toBe(1);
+    expect(state.phase).toBe("playing");
+
+    expect(getInteractionLabel(state)).toBe("Fit sailcloth");
+    expect(interact(state)).toBe(true);
+    expect(state.repairs).toEqual({ mast: true, canvas: true, pitch: false });
+    expect(state.turn).toBe(2);
+    expect(state.phase).toBe("playing");
+
+    expect(getInteractionLabel(state)).toBe("Fit pitch barrel");
+    expect(interact(state)).toBe(true);
+    expect(state.repairs).toEqual({ mast: true, canvas: true, pitch: true });
+    expect(state.turn).toBe(3);
+    expect(state.phase).toBe("won");
+  });
+
+  it("does not award victory if the captain dies during the final installation turn", () => {
+    const state = createGame(captain, "fatal-shipbuilding");
+    const player = getCaptain(state);
+    const enemy = state.actors.find((actor) => actor.kind === "enemy");
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    for (const actor of state.actors) {
+      if (actor.kind === "enemy") actor.alive = actor.id === enemy.id;
+    }
+    enemy.x = player.x + 1;
+    enemy.y = player.y;
+    enemy.melee = 99;
+    enemy.alerted = true;
+    player.hp = 1;
+    state.inventory.salts = 0;
+    state.recoveredParts = { mast: true, canvas: true, pitch: true };
+    state.repairs = { mast: true, canvas: true, pitch: false };
+
+    expect(interact(state)).toBe(true);
+    expect(state.turn).toBe(1);
+    expect(state.repairs.pitch).toBe(true);
+    expect(state.phase).toBe("lost");
+    expect(state.messages.some((message) => message.includes("Victory"))).toBe(false);
+  });
+
+  it("does not spend a turn interacting away from a feature", () => {
+    const state = createGame(captain, "nothing-to-see-here");
+    const player = getCaptain(state);
+    player.x = state.wreck.x;
+    player.y = state.wreck.y - 1;
+
+    expect(interact(state)).toBe(false);
+    expect(state.turn).toBe(0);
   });
 
   it("does not spend a turn on an invalid move into water", () => {
@@ -185,5 +283,17 @@ describe("game simulation", () => {
     expect(useStairs(state)).toBe(true);
     expect(state.currentLevel).toBe("surface");
     expect(player).toMatchObject({ level: "surface", x: state.caveEntrance.x, y: state.caveEntrance.y });
+  });
+
+  it("uses the contextual interaction to traverse cave stairs", () => {
+    const state = createGame(captain, "contextual-stairs");
+    const player = getCaptain(state);
+    player.x = state.caveEntrance.x;
+    player.y = state.caveEntrance.y;
+
+    expect(getInteractionLabel(state)).toBe("Descend cave");
+    expect(interact(state)).toBe(true);
+    expect(state.currentLevel).toBe("cave");
+    expect(getInteractionLabel(state)).toBe("Climb outside");
   });
 });

@@ -75,7 +75,7 @@ export interface Inventory {
 }
 
 export interface GameState {
-  version: 3;
+  version: 4;
   seed: string;
   rngState: number;
   levels: Record<LevelId, MapLevel>;
@@ -92,6 +92,7 @@ export interface GameState {
   dangerLevel: number;
   crewOrder: CrewOrder;
   inventory: Inventory;
+  recoveredParts: Record<RepairPart, boolean>;
   repairs: Record<RepairPart, boolean>;
   captainConfig: CaptainConfig;
   messages: string[];

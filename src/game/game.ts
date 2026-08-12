@@ -31,6 +31,14 @@ const REPAIR_NAMES: Record<RepairPart, string> = {
   pitch: "a barrel of suspiciously warm pitch",
 };
 
+const REPAIR_LABELS: Record<RepairPart, string> = {
+  mast: "replacement mast",
+  canvas: "sailcloth",
+  pitch: "pitch barrel",
+};
+
+const REPAIR_SEQUENCE: RepairPart[] = ["mast", "canvas", "pitch"];
+
 const PICKUP_NAMES: Record<PickupType, string> = {
   ...REPAIR_NAMES,
   ammo: "a pouch of dry powder and shot",
@@ -252,7 +260,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
   }
 
   const state: GameState = {
-    version: 3,
+    version: 4,
     seed,
     rngState: rng.state,
     levels: {
@@ -272,6 +280,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
     dangerLevel: 0,
     crewOrder: "follow",
     inventory: { loaded: true, ammo: 6, salts: config.background === "surgeon" ? 2 : 1 },
+    recoveredParts: { mast: false, canvas: false, pitch: false },
     repairs: { mast: false, canvas: false, pitch: false },
     captainConfig: config,
     messages: [
@@ -330,20 +339,8 @@ function collectAtCaptain(state: GameState): void {
     pickup.collected = true;
     if (pickup.type === "ammo") state.inventory.ammo += 4;
     else if (pickup.type === "salts") state.inventory.salts += 1;
-    else state.repairs[pickup.type] = true;
+    else state.recoveredParts[pickup.type] = true;
     addMessage(state, `You recover ${PICKUP_NAMES[pickup.type]}.`);
-  }
-
-  if (
-    state.currentLevel === "surface" &&
-    player.x === state.wreck.x &&
-    player.y === state.wreck.y &&
-    state.repairs.mast &&
-    state.repairs.canvas &&
-    state.repairs.pitch
-  ) {
-    state.phase = "won";
-    addMessage(state, "The ship is seaworthy, in the broad and legally nonbinding sense. Victory!");
   }
 }
 
@@ -688,6 +685,65 @@ export function cycleCrewOrder(state: GameState): CrewOrder {
 
 export function getCaptain(state: GameState): Actor {
   return captain(state);
+}
+
+function nextRecoveredRepair(state: GameState): RepairPart | null {
+  return REPAIR_SEQUENCE.find((part) => state.recoveredParts[part] && !state.repairs[part]) ?? null;
+}
+
+function isAtWreck(state: GameState): boolean {
+  const player = captain(state);
+  return state.currentLevel === "surface" && player.x === state.wreck.x && player.y === state.wreck.y;
+}
+
+function inspectWreck(state: GameState): void {
+  const tally = REPAIR_SEQUENCE.map((part) => {
+    if (state.repairs[part]) return `${REPAIR_LABELS[part]} installed`;
+    if (state.recoveredParts[part]) return `${REPAIR_LABELS[part]} recovered and ready to fit`;
+    const location = part === "pitch" ? "search the cave" : "search the island";
+    return `${REPAIR_LABELS[part]} missing; ${location}`;
+  });
+  addMessage(state, `Shipwright's tally: ${tally.join("; ")}.`);
+}
+
+export function getInteractionLabel(state: GameState): string {
+  const player = captain(state);
+  const map = currentMap(state);
+  const terrain = map.tiles[tileIndex(player.x, player.y, map.width)]?.terrain;
+  if (terrain === "stairsDown") return "Descend cave";
+  if (terrain === "stairsUp") return "Climb outside";
+  if (isAtWreck(state)) {
+    const part = nextRecoveredRepair(state);
+    return part ? `Fit ${REPAIR_LABELS[part]}` : "Inspect wreck";
+  }
+  return "Inspect surroundings";
+}
+
+export function interact(state: GameState): boolean {
+  if (state.phase !== "playing") return false;
+  const player = captain(state);
+  const map = currentMap(state);
+  const terrain = map.tiles[tileIndex(player.x, player.y, map.width)]?.terrain;
+  if (terrain === "stairsDown" || terrain === "stairsUp") return useStairs(state);
+  if (!isAtWreck(state)) {
+    addMessage(state, "There is nothing here requiring the captain's personal attention.");
+    return false;
+  }
+
+  const part = nextRecoveredRepair(state);
+  if (!part) {
+    inspectWreck(state);
+    return false;
+  }
+
+  state.repairs[part] = true;
+  addMessage(state, `You fit the ${REPAIR_LABELS[part]}. The ship looks incrementally less doomed.`);
+  finishTurn(state);
+  if (state.phase === "playing" && REPAIR_SEQUENCE.every((repair) => state.repairs[repair])) {
+    state.phase = "won";
+    addMessage(state, "The ship is seaworthy, in the broad and legally nonbinding sense. Victory!");
+  }
+  return true;
 }
 
 export function useStairs(state: GameState): boolean {
