@@ -706,6 +706,32 @@ function expireEnemyAwareness(state: GameState): void {
   }
 }
 
+function soundReaches(state: GameState, sound: SoundEvent, enemy: Actor): boolean {
+  const map = state.levels[sound.level];
+  const budget = sound.radius + (enemy.enemyAttribute === "keenEared" ? 3 : 0);
+  const frontier: Array<{ point: Point; cost: number }> = [{ point: sound.origin, cost: 0 }];
+  const bestCosts = new Map<number, number>([[tileIndex(sound.origin.x, sound.origin.y, map.width), 0]]);
+
+  while (frontier.length > 0) {
+    frontier.sort((a, b) => a.cost - b.cost || a.point.y - b.point.y || a.point.x - b.point.x);
+    const current = frontier.shift();
+    if (!current || current.cost > budget) break;
+    if (current.point.x === enemy.x && current.point.y === enemy.y) return true;
+    for (const direction of DIRECTIONS) {
+      const point = { x: current.point.x + direction.x, y: current.point.y + direction.y };
+      if (!inBounds(point.x, point.y, map.width, map.height)) continue;
+      const terrain = map.tiles[tileIndex(point.x, point.y, map.width)]?.terrain;
+      if (!terrain || terrain === "caveWall") continue;
+      const cost = current.cost + (terrain === "jungle" || terrain === "rock" ? 2 : 1);
+      const index = tileIndex(point.x, point.y, map.width);
+      if (cost > budget || cost >= (bestCosts.get(index) ?? Number.POSITIVE_INFINITY)) continue;
+      bestCosts.set(index, cost);
+      frontier.push({ point, cost });
+    }
+  }
+  return false;
+}
+
 function resolveSounds(state: GameState, sounds: SoundEvent[]): void {
   for (const sound of sounds) {
     state.threat += sound.radius;
@@ -715,7 +741,7 @@ function resolveSounds(state: GameState, sounds: SoundEvent[]): void {
         enemy.kind !== "enemy" ||
         enemy.id === sound.sourceActorId ||
         enemy.level !== sound.level ||
-        distance(enemy, sound.origin) > sound.radius + (enemy.enemyAttribute === "keenEared" ? 3 : 0)
+        !soundReaches(state, sound, enemy)
       ) continue;
       const seen = enemy.level === state.currentLevel ? seenPartyTarget(state, enemy) : null;
       if (seen) rememberParty(state, enemy, seen);

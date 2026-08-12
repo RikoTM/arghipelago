@@ -9,6 +9,7 @@ The first playable prototype includes:
 - A flintlock with targeting, noise, ammunition, and reloading.
 - Three recruitable crew members with follow, hold, and rally orders.
 - Deterministic special enemies with distinct reactive attributes.
+- Spatial noise and terrain-aware enemy investigation.
 - A procedurally generated cave containing a required repair objective.
 - Escalating danger, repair objectives, victory, permadeath, and conditional rescue.
 - Keyboard and touch controls.

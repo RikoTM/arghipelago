@@ -597,6 +597,104 @@ describe("game simulation", () => {
     expect(ordinary.enemyAwareness).toBeNull();
   });
 
+  it("blocks sound behind sealed cave walls", () => {
+    const state = createGame(captain, "sealed-cave-sound");
+    const player = getCaptain(state);
+    const enemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "cave" && actor.enemyType !== "crab");
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    state.currentLevel = "cave";
+    player.level = "cave";
+    player.x = 10;
+    player.y = 10;
+    enemy.x = 12;
+    enemy.y = 10;
+    enemy.enemyAwareness = null;
+    enemy.enemyAttribute = null;
+    for (const actor of state.actors) {
+      if (actor.kind === "enemy" && actor.id !== enemy.id) actor.alive = false;
+    }
+    for (const tile of state.levels.cave.tiles) tile.terrain = "caveFloor";
+    for (let y = 0; y < state.levels.cave.height; y += 1) {
+      const tile = state.levels.cave.tiles[tileIndex(11, y, state.levels.cave.width)];
+      if (tile) tile.terrain = "caveWall";
+    }
+
+    makeDistraction(state);
+
+    expect(enemy.enemyAwareness).toBeNull();
+  });
+
+  it("carries sound around cave walls when a passage is open", () => {
+    const state = createGame(captain, "cave-sound-passage");
+    const player = getCaptain(state);
+    const enemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "cave" && actor.enemyType !== "crab");
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    state.currentLevel = "cave";
+    player.level = "cave";
+    player.x = 10;
+    player.y = 10;
+    enemy.x = 12;
+    enemy.y = 10;
+    enemy.enemyAwareness = null;
+    enemy.enemyAttribute = null;
+    for (const actor of state.actors) {
+      if (actor.kind === "enemy" && actor.id !== enemy.id) actor.alive = false;
+    }
+    for (const tile of state.levels.cave.tiles) tile.terrain = "caveFloor";
+    for (let y = 0; y < state.levels.cave.height; y += 1) {
+      const tile = state.levels.cave.tiles[tileIndex(11, y, state.levels.cave.width)];
+      if (tile) tile.terrain = "caveWall";
+    }
+    const opening = state.levels.cave.tiles[tileIndex(11, 11, state.levels.cave.width)];
+    if (opening) opening.terrain = "caveFloor";
+
+    makeDistraction(state);
+
+    expect(enemy.enemyAwareness).toMatchObject({ mode: "investigating" });
+  });
+
+  it("lets keen hearing overcome muffling terrain", () => {
+    const ordinaryState = createGame(captain, "muffled-hearing");
+    const keenState = createGame(captain, "muffled-hearing");
+    const prepare = (state: ReturnType<typeof createGame>, attribute: EnemyAttribute | null): Actor | null => {
+      const player = getCaptain(state);
+      const enemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType !== "crab");
+      if (!enemy) return null;
+      state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== enemy.id).forEach((actor) => {
+        actor.alive = false;
+      });
+      for (const tile of state.levels.surface.tiles) tile.terrain = "caveWall";
+      player.x = 20;
+      player.y = 20;
+      enemy.x = 25;
+      enemy.y = 20;
+      enemy.enemyAwareness = null;
+      enemy.enemyAttribute = attribute;
+      const origin = state.levels.surface.tiles[tileIndex(20, 20, state.levels.surface.width)];
+      const destination = state.levels.surface.tiles[tileIndex(25, 20, state.levels.surface.width)];
+      if (origin) origin.terrain = "grass";
+      if (destination) destination.terrain = "grass";
+      for (let x = 21; x <= 24; x += 1) {
+        const tile = state.levels.surface.tiles[tileIndex(x, 20, state.levels.surface.width)];
+        if (tile) tile.terrain = "jungle";
+      }
+      return enemy;
+    };
+    const ordinary = prepare(ordinaryState, null);
+    const keen = prepare(keenState, "keenEared");
+    expect(ordinary).not.toBeNull();
+    expect(keen).not.toBeNull();
+    if (!ordinary || !keen) return;
+
+    makeDistraction(ordinaryState);
+    makeDistraction(keenState);
+
+    expect(ordinary.enemyAwareness).toBeNull();
+    expect(keen.enemyAwareness).toMatchObject({ mode: "investigating" });
+  });
+
   it("has ironclad enemies reduce firearm damage", () => {
     const ordinaryState = createGame({ ...captain, knack: "deadeye" }, "ironclad-shot");
     const armoredState = createGame({ ...captain, knack: "deadeye" }, "ironclad-shot");
