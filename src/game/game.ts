@@ -412,16 +412,36 @@ function tryMoveActor(state: GameState, actor: Actor, x: number, y: number): boo
   return true;
 }
 
-function bestStepToward(state: GameState, actor: Actor, destination: Point): Point | null {
+function bestStepToward(
+  state: GameState,
+  actor: Actor,
+  destination: Point,
+  desiredDistance = 1,
+): Point | null {
+  if (distance(actor, destination) <= desiredDistance) return null;
   const map = currentMap(state);
-  const choices = DIRECTIONS.map((direction) => ({ x: actor.x + direction.x, y: actor.y + direction.y }))
-    .filter((point) => {
-      if (!inBounds(point.x, point.y, map.width, map.height)) return false;
-      const tile = map.tiles[tileIndex(point.x, point.y, map.width)];
-      return Boolean(tile && isPassableTerrain(tile.terrain) && !actorAt(state, point.x, point.y, actor.id));
-    })
-    .sort((a, b) => distance(a, destination) - distance(b, destination));
-  return choices[0] ?? null;
+  const queue: Array<{ point: Point; firstStep: Point | null }> = [
+    { point: { x: actor.x, y: actor.y }, firstStep: null },
+  ];
+  const seen = new Set<number>([tileIndex(actor.x, actor.y, map.width)]);
+
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const current = queue[cursor];
+    if (!current) continue;
+    for (const direction of DIRECTIONS) {
+      const point = { x: current.point.x + direction.x, y: current.point.y + direction.y };
+      if (!inBounds(point.x, point.y, map.width, map.height)) continue;
+      const index = tileIndex(point.x, point.y, map.width);
+      if (seen.has(index)) continue;
+      const tile = map.tiles[index];
+      if (!tile || !isPassableTerrain(tile.terrain) || actorAt(state, point.x, point.y, actor.id)) continue;
+      seen.add(index);
+      const firstStep = current.firstStep ?? point;
+      if (distance(point, destination) <= desiredDistance) return firstStep;
+      queue.push({ point, firstStep });
+    }
+  }
+  return null;
 }
 
 function runCrewTurns(state: GameState, rng: Rng): void {
@@ -461,7 +481,7 @@ function runCrewTurns(state: GameState, rng: Rng): void {
     if (state.crewOrder === "hold") continue;
     const desiredDistance = state.crewOrder === "rally" ? 1 : 2;
     if (distance(crew, player) > desiredDistance) {
-      const step = bestStepToward(state, crew, player);
+      const step = bestStepToward(state, crew, player, desiredDistance);
       if (step) tryMoveActor(state, crew, step.x, step.y);
     }
   }

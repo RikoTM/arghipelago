@@ -470,6 +470,92 @@ describe("game simulation", () => {
     expect(state.crewTargetId).toBeNull();
   });
 
+  it("routes following crew around obstacles even when the first step moves away", () => {
+    const state = createGame(captain, "crew-navigation");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    expect(crew).toBeDefined();
+    if (!crew) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    for (let y = 0; y <= 25; y += 1) {
+      const tile = state.levels.surface.tiles[tileIndex(23, y, state.levels.surface.width)];
+      if (tile) tile.terrain = "water";
+    }
+    player.x = 20;
+    player.y = 20;
+    crew.kind = "crew";
+    crew.x = 24;
+    crew.y = 20;
+
+    waitTurn(state);
+
+    expect(crew).toMatchObject({ x: 24, y: 21 });
+  });
+
+  it("routes pursuing enemies around obstacles", () => {
+    const state = createGame(captain, "enemy-navigation");
+    const player = getCaptain(state);
+    const enemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface");
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== enemy.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    for (let y = 0; y <= 25; y += 1) {
+      const tile = state.levels.surface.tiles[tileIndex(23, y, state.levels.surface.width)];
+      if (tile) tile.terrain = "water";
+    }
+    player.x = 20;
+    player.y = 20;
+    enemy.x = 24;
+    enemy.y = 20;
+    enemy.alerted = true;
+    enemy.alertTurns = 10;
+
+    waitTurn(state);
+
+    expect(enemy).toMatchObject({ x: 24, y: 21 });
+  });
+
+  it("leaves actors stationary when no route is available", () => {
+    const state = createGame(captain, "blocked-navigation");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    expect(crew).toBeDefined();
+    if (!crew) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    crew.kind = "crew";
+    crew.x = 24;
+    crew.y = 20;
+    for (let y = crew.y - 1; y <= crew.y + 1; y += 1) {
+      for (let x = crew.x - 1; x <= crew.x + 1; x += 1) {
+        if (x === crew.x && y === crew.y) continue;
+        const tile = state.levels.surface.tiles[tileIndex(x, y, state.levels.surface.width)];
+        if (tile) tile.terrain = "water";
+      }
+    }
+
+    waitTurn(state);
+
+    expect(crew).toMatchObject({ x: 24, y: 20 });
+  });
+
+  it("resolves identical pathfinding turns deterministically", () => {
+    const first = createGame(captain, "repeatable-navigation");
+    const second = createGame(captain, "repeatable-navigation");
+    for (let turn = 0; turn < 20; turn += 1) {
+      waitTurn(first);
+      waitTurn(second);
+    }
+
+    expect(first).toEqual(second);
+  });
+
   it("transitions between the surface and cave without activating enemies on the other level", () => {
     const state = createGame(captain, "subterranean-test");
     const player = getCaptain(state);
