@@ -8,6 +8,7 @@ The first playable prototype includes:
 - Eight-direction turn-based movement and melee bump attacks.
 - A flintlock with targeting, noise, ammunition, and reloading.
 - Three recruitable crew members with follow, hold, and rally orders.
+- Seeded crew traits with hazard, blast, and rescue reactions.
 - Deterministic special enemies with distinct reactive attributes.
 - Spatial noise and terrain-aware enemy investigation.
 - Deterministic squalls, rain, wet powder, and coastal dousing.

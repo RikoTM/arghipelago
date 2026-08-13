@@ -533,6 +533,13 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
         context.fill();
         context.stroke();
       }
+      if (actor.kind === "crew" && actor.crewReaction === "brace") {
+        context.fillStyle = PAPER;
+        context.strokeStyle = INK;
+        context.lineWidth = 2;
+        context.fillRect(screenX + 22, screenY + 22, 8, 8);
+        context.strokeRect(screenX + 22, screenY + 22, 8, 8);
+      }
       if (actor.hp < actor.maxHp) {
         context.fillStyle = "#2e302b";
         context.fillRect(screenX + 4, screenY + 1, 24, 3);

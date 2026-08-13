@@ -24,7 +24,7 @@ import {
   visibleEnemies,
   waitTurn,
 } from "./game";
-import type { Actor, CaptainConfig, EnemyAttribute } from "./types";
+import type { Actor, CaptainConfig, CrewTrait, EnemyAttribute } from "./types";
 import { generateCave, generateIsland, isPassableTerrain, tileIndex } from "./world";
 
 const captain: CaptainConfig = {
@@ -119,10 +119,24 @@ describe("game simulation", () => {
     expect(createGame(captain, "repeatable-run")).toEqual(createGame(captain, "repeatable-run"));
   });
 
+  it("assigns unique deterministic crew traits without consuming simulation RNG", () => {
+    const first = createGame(captain, "crew-personalities");
+    const second = createGame(captain, "crew-personalities");
+    const traits = first.actors
+      .filter((actor) => actor.kind === "castaway")
+      .map((actor) => actor.crewTrait);
+
+    expect(traits).toHaveLength(3);
+    expect(new Set(traits).size).toBe(3);
+    expect(new Set(traits)).toEqual(new Set<CrewTrait>(["smokeShy", "powderShy", "shipmate"]));
+    expect(first.rngState).toBe(second.rngState);
+    expect(first.actors).toEqual(second.actors);
+  });
+
   it("round-trips the complete active run through JSON storage", () => {
     const state = createGame(captain, "save-round-trip");
     const restored = JSON.parse(JSON.stringify(state)) as typeof state;
-    expect(restored.version).toBe(11);
+    expect(restored.version).toBe(12);
     expect(restored.environment).toEqual({ surface: [], cave: [] });
     expect(restored.surfaceWeather.phase).toBe("fair");
     expect(restored).toEqual(state);
@@ -421,11 +435,15 @@ describe("game simulation", () => {
     state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
     player.hp -= 6;
     urgent.kind = "crew";
+    urgent.crewTrait = "powderShy";
+    urgent.role = "Carpenter";
     urgent.x = player.x + 1;
     urgent.y = player.y;
     urgent.hp = 0;
     urgent.incapacitatedTurns = 2;
     stable.kind = "crew";
+    stable.crewTrait = "smokeShy";
+    stable.role = "Gunner";
     stable.x = player.x;
     stable.y = player.y + 1;
     stable.hp = 0;
@@ -1224,6 +1242,121 @@ describe("game simulation", () => {
 
     expect(cycleCrewOrder(state)).toBe("follow");
     expect(state.crewTargetId).toBeNull();
+  });
+
+  it("has powder-shy crew brace after audible hostile gunfire without repeated lockout", () => {
+    const state = createGame(captain, "powder-shy-brace");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    const gunner = state.actors.find((actor) => actor.enemyType === "bonegunner" && actor.level === "surface");
+    expect(crew).toBeDefined();
+    expect(gunner).toBeDefined();
+    if (!crew || !gunner) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== gunner.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    crew.kind = "crew";
+    crew.crewTrait = "powderShy";
+    crew.role = "Carpenter";
+    crew.x = 21;
+    crew.y = 20;
+    gunner.x = 24;
+    gunner.y = 20;
+    gunner.enemyAttribute = null;
+    gunner.wetUntilTurn = 0;
+    pursue(gunner, player);
+
+    waitTurn(state);
+
+    expect(crew.crewReaction).toBe("brace");
+    const position = { x: crew.x, y: crew.y };
+    waitTurn(state);
+    expect(crew.crewReaction).toBeNull();
+    expect({ x: crew.x, y: crew.y }).toEqual(position);
+    expect(crew.reactionCooldownUntilTurn).toBeGreaterThan(state.turn);
+  });
+
+  it("uses Rally to cancel a pending crew reaction", () => {
+    const state = createGame(captain, "rally-steadies-crew");
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    expect(crew).toBeDefined();
+    if (!crew) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    crew.kind = "crew";
+    crew.crewReaction = "brace";
+    state.crewOrder = "hold";
+
+    expect(cycleCrewOrder(state)).toBe("rally");
+    expect(crew.crewReaction).toBeNull();
+  });
+
+  it("has smoke-shy crew withdraw from hazards unless wet", () => {
+    const dry = createGame(captain, "smoke-shy-withdrawal");
+    const wet = createGame(captain, "smoke-shy-withdrawal");
+    const prepare = (state: ReturnType<typeof createGame>, wetCrew: boolean): Actor | null => {
+      const player = getCaptain(state);
+      const crew = state.actors.find((actor) => actor.kind === "castaway");
+      if (!crew) return null;
+      state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+      for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+      player.x = 20;
+      player.y = 20;
+      crew.kind = "crew";
+      crew.crewTrait = "smokeShy";
+      crew.x = 22;
+      crew.y = 20;
+      crew.wetUntilTurn = wetCrew ? 10 : 0;
+      state.environment.surface = [{ x: 22, y: 20, fireTurns: 2, smokeTurns: 4 }];
+      return crew;
+    };
+    const dryCrew = prepare(dry, false);
+    const wetCrew = prepare(wet, true);
+    expect(dryCrew).not.toBeNull();
+    expect(wetCrew).not.toBeNull();
+    if (!dryCrew || !wetCrew) return;
+
+    waitTurn(dry);
+    waitTurn(wet);
+
+    expect(dryCrew).not.toMatchObject({ x: 22, y: 20 });
+    expect(wetCrew).toMatchObject({ x: 22, y: 20 });
+  });
+
+  it("has Shipmates stabilize an adjacent casualty once without spending salts", () => {
+    const state = createGame(captain, "shipmate-stabilization");
+    const player = getCaptain(state);
+    const crew = state.actors.filter((actor) => actor.kind === "castaway").slice(0, 2);
+    const helper = crew[0];
+    const casualty = crew[1];
+    expect(helper).toBeDefined();
+    expect(casualty).toBeDefined();
+    if (!helper || !casualty) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    player.x = 20;
+    player.y = 20;
+    helper.kind = "crew";
+    helper.crewTrait = "shipmate";
+    helper.role = "Carpenter";
+    helper.x = 21;
+    helper.y = 20;
+    casualty.kind = "crew";
+    casualty.x = 22;
+    casualty.y = 20;
+    casualty.hp = 0;
+    casualty.incapacitatedTurns = 3;
+    casualty.stabilized = false;
+    const salts = state.inventory.salts;
+
+    waitTurn(state);
+
+    expect(casualty.stabilized).toBe(true);
+    expect(casualty.incapacitatedTurns).toBe(4);
+    expect(state.inventory.salts).toBe(salts);
+    waitTurn(state);
+    expect(casualty.incapacitatedTurns).toBe(3);
   });
 
   it("routes following crew around obstacles even when the first step moves away", () => {

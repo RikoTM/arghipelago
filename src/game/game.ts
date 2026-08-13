@@ -3,6 +3,7 @@ import type {
   Actor,
   CaptainConfig,
   CrewOrder,
+  CrewTrait,
   EnemyAttribute,
   EnemyType,
   EnvironmentalTile,
@@ -113,6 +114,7 @@ const ATTRIBUTE_COMPATIBILITY: Record<EnemyAttribute, EnemyType[]> = {
 const ENEMY_ATTRIBUTES = Object.keys(ATTRIBUTE_NAMES) as EnemyAttribute[];
 
 const RAIN_EXPOSED_TERRAIN: Terrain[] = ["sand", "grass", "rock"];
+const CREW_TRAITS: CrewTrait[] = ["smokeShy", "powderShy", "shipmate"];
 
 export interface MapInspection {
   visibility: "unexplored" | "remembered" | "visible";
@@ -345,6 +347,10 @@ function makeEnemy(id: number, type: EnemyType, point: Point, rng: Rng, level: L
     kind: "enemy",
     enemyType: type,
     enemyAttribute: null,
+    crewTrait: null,
+    crewReaction: null,
+    reactionCooldownUntilTurn: 0,
+    stabilized: false,
     name: names[rng.int(names.length)] ?? "Unnamed Menace",
     x: point.x,
     y: point.y,
@@ -396,6 +402,21 @@ function assignInitialSpecials(seed: string, actors: Actor[], wreck: Point, cave
   if (caveEnemy) assignEnemyAttribute(caveEnemy, caveRng);
 }
 
+function assignCrewTraits(seed: string, actors: Actor[]): void {
+  const rng = new Rng(`${seed}:crew-traits:v1`);
+  const traits = [...CREW_TRAITS];
+  for (let index = traits.length - 1; index > 0; index -= 1) {
+    const swapIndex = rng.int(index + 1);
+    const current = traits[index];
+    const other = traits[swapIndex];
+    if (current === undefined || other === undefined) continue;
+    traits[index] = other;
+    traits[swapIndex] = current;
+  }
+  const castaways = actors.filter((actor) => actor.kind === "castaway").sort((a, b) => a.id - b.id);
+  for (const [index, castaway] of castaways.entries()) castaway.crewTrait = traits[index] ?? "shipmate";
+}
+
 export function createGame(config: CaptainConfig, seed: string): GameState {
   const island = generateIsland(seed);
   const cave = generateCave(seed);
@@ -413,6 +434,10 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       level: "surface",
       kind: "captain",
       enemyAttribute: null,
+      crewTrait: null,
+      crewReaction: null,
+      reactionCooldownUntilTurn: 0,
+      stabilized: false,
       name: config.name,
       x: island.wreck.x,
       y: island.wreck.y,
@@ -435,6 +460,10 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       level: "surface",
       kind: "castaway",
       enemyAttribute: null,
+      crewTrait: null,
+      crewReaction: null,
+      reactionCooldownUntilTurn: 0,
+      stabilized: false,
       name: recruit.name,
       role: recruit.role,
       x: point.x,
@@ -494,9 +523,10 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
     nextId += 1;
   }
   assignInitialSpecials(seed, actors, island.wreck, cave.exit);
+  assignCrewTraits(seed, actors);
 
   const state: GameState = {
-    version: 11,
+    version: 12,
     seed,
     rngState: rng.state,
     levels: {
@@ -655,6 +685,8 @@ function damageActor(
   } else if (target.kind === "crew") {
     target.alive = true;
     target.incapacitatedTurns = INCAPACITATION_TURNS + 1;
+    target.stabilized = false;
+    target.crewReaction = null;
     addMessage(state, `${target.name} is incapacitated. Smelling salts may yet settle the argument.`);
   } else {
     addMessage(state, `${target.name} is killed.`);
@@ -792,6 +824,58 @@ function bestStepAway(state: GameState, actor: Actor, threat: Point): Point | nu
     })[0] ?? null;
 }
 
+function hazardScore(state: GameState, actor: Actor, point: Point): number {
+  const effect = environmentAt(state, state.currentLevel, point);
+  return (effect?.fireTurns && actor.enemyType !== "slag" ? 12 : 0) + (effect?.smokeTurns ? 2 : 0);
+}
+
+function smokeShyStep(state: GameState, crew: Actor): Point | null {
+  if (crew.crewTrait !== "smokeShy" || isWet(state, crew) || crew.reactionCooldownUntilTurn > state.turn) return null;
+  const currentHazard = hazardScore(state, crew, crew);
+  const adjacentHazard = DIRECTIONS.some((direction) =>
+    hazardScore(state, crew, { x: crew.x + direction.x, y: crew.y + direction.y }) > 0,
+  );
+  if (currentHazard === 0 && !adjacentHazard) return null;
+  const player = captain(state);
+  const map = currentMap(state);
+  return DIRECTIONS.map((direction) => ({ x: crew.x + direction.x, y: crew.y + direction.y }))
+    .filter((point) => {
+      if (!inBounds(point.x, point.y, map.width, map.height)) return false;
+      const tile = map.tiles[tileIndex(point.x, point.y, map.width)];
+      return Boolean(tile && isPassableTerrain(tile.terrain) && !actorAt(state, point.x, point.y, crew.id));
+    })
+    .sort((a, b) =>
+      hazardScore(state, crew, a) - hazardScore(state, crew, b) ||
+      distance(a, player) - distance(b, player) ||
+      tileIndex(a.x, a.y, map.width) - tileIndex(b.x, b.y, map.width),
+    )[0] ?? null;
+}
+
+function aidCrew(state: GameState, crew: Actor): boolean {
+  if (crew.crewTrait !== "shipmate" && !crew.role?.startsWith("Surgeon")) return false;
+  const casualty = state.actors
+    .filter(
+      (actor) =>
+        isIncapacitated(actor) &&
+        actor.level === state.currentLevel &&
+        !actor.stabilized &&
+        (state.crewOrder !== "hold" || distance(crew, actor) <= 1),
+    )
+    .sort((a, b) => a.incapacitatedTurns - b.incapacitatedTurns || a.id - b.id)[0];
+  if (!casualty) return false;
+  if (distance(crew, casualty) <= 1) {
+    const extension = crew.role?.startsWith("Surgeon") ? 2 : 1;
+    casualty.incapacitatedTurns = Math.min(INCAPACITATION_TURNS, casualty.incapacitatedTurns + extension + 1);
+    casualty.stabilized = true;
+    addMessage(state, `${crew.name} stabilizes ${casualty.name}, buying ${extension} more rescue turn${extension === 1 ? "" : "s"}.`);
+  } else {
+    const step = bestStepToward(state, crew, casualty);
+    if (step) tryMoveActor(state, crew, step.x, step.y);
+    addMessage(state, `${crew.name} moves to aid ${casualty.name}.`);
+  }
+  return true;
+}
+
 function runCrewTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
   const player = captain(state);
   const orderedTarget = state.actors.find(
@@ -810,6 +894,21 @@ function runCrewTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
   for (const crew of state.actors.filter(
     (actor) => canAct(actor) && actor.level === state.currentLevel && actor.kind === "crew",
   )) {
+    if (state.crewOrder === "rally") crew.crewReaction = null;
+    if (crew.crewReaction === "brace") {
+      crew.crewReaction = null;
+      crew.reactionCooldownUntilTurn = state.turn + 2;
+      addMessage(state, `${crew.name} loses the moment to a powder-shy flinch.`);
+      continue;
+    }
+    const withdrawal = smokeShyStep(state, crew);
+    if (withdrawal && hazardScore(state, crew, withdrawal) < Math.max(1, hazardScore(state, crew, crew))) {
+      tryMoveActor(state, crew, withdrawal.x, withdrawal.y);
+      crew.reactionCooldownUntilTurn = state.turn + 2;
+      addMessage(state, `${crew.name} withdraws from fire and smoke.`);
+      continue;
+    }
+    if (aidCrew(state, crew)) continue;
     if (orderedTarget?.alive) {
       if (distance(crew, orderedTarget) <= 1) meleeAttack(state, crew, orderedTarget, rng, sounds);
       else {
@@ -876,9 +975,10 @@ function expireEnemyAwareness(state: GameState): void {
   }
 }
 
-function soundReaches(state: GameState, sound: SoundEvent, enemy: Actor): boolean {
+function soundReaches(state: GameState, sound: SoundEvent, listener: Actor): boolean {
   const map = state.levels[sound.level];
-  const budget = sound.radius + (enemy.enemyAttribute === "keenEared" ? 3 : 0);
+  const rainPenalty = sound.level === "surface" && state.surfaceWeather.phase === "rain" ? 2 : 0;
+  const budget = Math.max(0, sound.radius + (listener.enemyAttribute === "keenEared" ? 3 : 0) - rainPenalty);
   const frontier: Array<{ point: Point; cost: number }> = [{ point: sound.origin, cost: 0 }];
   const bestCosts = new Map<number, number>([[tileIndex(sound.origin.x, sound.origin.y, map.width), 0]]);
 
@@ -886,7 +986,7 @@ function soundReaches(state: GameState, sound: SoundEvent, enemy: Actor): boolea
     frontier.sort((a, b) => a.cost - b.cost || a.point.y - b.point.y || a.point.x - b.point.x);
     const current = frontier.shift();
     if (!current || current.cost > budget) break;
-    if (current.point.x === enemy.x && current.point.y === enemy.y) return true;
+    if (current.point.x === listener.x && current.point.y === listener.y) return true;
     for (const direction of DIRECTIONS) {
       const point = { x: current.point.x + direction.x, y: current.point.y + direction.y };
       if (!inBounds(point.x, point.y, map.width, map.height)) continue;
@@ -902,9 +1002,31 @@ function soundReaches(state: GameState, sound: SoundEvent, enemy: Actor): boolea
   return false;
 }
 
+function triggerCrewReactions(state: GameState, sound: SoundEvent): void {
+  if (sound.kind !== "gunfire" && sound.kind !== "slagBurst") return;
+  const source = sound.sourceActorId === null
+    ? null
+    : state.actors.find((actor) => actor.id === sound.sourceActorId) ?? null;
+  for (const crew of state.actors) {
+    if (
+      !canAct(crew) ||
+      crew.kind !== "crew" ||
+      crew.level !== sound.level ||
+      crew.crewTrait !== "powderShy" ||
+      crew.reactionCooldownUntilTurn > state.turn ||
+      !soundReaches(state, sound, crew)
+    ) continue;
+    const friendlyCaptainShot = sound.kind === "gunfire" && source?.kind === "captain" && crew.role?.startsWith("Gunner");
+    if (friendlyCaptainShot) continue;
+    crew.crewReaction = "brace";
+    addMessage(state, `${crew.name} braces at the ${sound.kind === "slagBurst" ? "slag's blast" : "gunshot"}.`);
+  }
+}
+
 function resolveSounds(state: GameState, sounds: SoundEvent[]): void {
   for (const sound of sounds) {
     state.threat += sound.radius;
+    triggerCrewReactions(state, sound);
     for (const enemy of state.actors) {
       if (
         !enemy.alive ||

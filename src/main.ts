@@ -31,6 +31,7 @@ import type {
   Background,
   CaptainConfig,
   Coat,
+  CrewTrait,
   EnemyAttribute,
   EnemyType,
   GameState,
@@ -42,7 +43,7 @@ import type {
 } from "./game/types";
 import { createRenderer, getMapCamera, moveInspectionCursor, worldPointFromClient } from "./render";
 
-const SAVE_KEY = "arghipelago.active-run.v11";
+const SAVE_KEY = "arghipelago.active-run.v12";
 
 function requireElement<T extends HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -122,6 +123,12 @@ const ENEMY_ATTRIBUTE_DETAILS: Record<EnemyAttribute, string> = {
   riposting: "special: riposting, retaliates after surviving melee damage",
 };
 
+const CREW_TRAIT_DETAILS: Record<CrewTrait, string> = {
+  smokeShy: "Smoke-shy: withdraws from nearby fire and smoke unless wet",
+  powderShy: "Powder-shy: may brace after audible gunfire or slag blasts",
+  shipmate: "Shipmate: moves to stabilize an incapacitated crewmate once",
+};
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>'"]/g, (character) => {
     const entities: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" };
@@ -144,7 +151,7 @@ function loadSave(): GameState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GameState>;
     if (
-      parsed.version !== 11 ||
+      parsed.version !== 12 ||
       !parsed.levels?.surface ||
       !parsed.levels.cave ||
       !parsed.environment?.surface ||
@@ -191,6 +198,11 @@ function loadSave(): GameState | null {
           (actor.kind === "crew" && actor.alive && actor.hp === 0 && actor.incapacitatedTurns === 0) ||
           (actor.kind !== "enemy" && actor.enemyAwareness !== null) ||
           (actor.kind !== "enemy" && actor.enemyAttribute !== null) ||
+          (actor.kind !== "crew" && actor.kind !== "castaway" && actor.crewTrait !== null) ||
+          (actor.crewTrait !== null && !["smokeShy", "powderShy", "shipmate"].includes(actor.crewTrait)) ||
+          (actor.crewReaction !== null && actor.crewReaction !== "brace") ||
+          !Number.isInteger(actor.reactionCooldownUntilTurn) ||
+          typeof actor.stabilized !== "boolean" ||
           (actor.enemyAttribute !== null &&
             !["keenEared", "ironclad", "skirmishing", "riposting"].includes(actor.enemyAttribute)) ||
           (actor.enemyAwareness !== null &&
@@ -249,6 +261,8 @@ function inspectionDescription(result: MapInspection): string {
       details.push(`${actor.name}, incapacitated, ${actor.incapacitatedTurns} turns to rescue`);
     } else if (actor.kind === "crew" || actor.kind === "castaway") {
       details.push(`${actor.name}, ${actor.role ?? actor.kind}, ${actor.hp}/${actor.maxHp} vigor`);
+      if (actor.crewTrait) details.push(CREW_TRAIT_DETAILS[actor.crewTrait]);
+      if (actor.crewReaction === "brace") details.push("Bracing at a recent blast; will lose the next action");
     } else {
       const tactic = actor.enemyType ? ENEMY_TACTICS[actor.enemyType] : "hostile";
       const awareness = actor.enemyAwareness;
@@ -349,7 +363,9 @@ function renderInterface(): void {
             const status = isIncapacitated(member)
               ? `Incapacitated: ${member.incapacitatedTurns} turns`
               : `${member.hp}/${member.maxHp} vigor${isWet(state as GameState, member) ? " / Wet" : ""}`;
-            return `<div class="crew-row ${isIncapacitated(member) ? "incapacitated" : ""}"><strong>${escapeHtml(member.name)}</strong><span>${escapeHtml(member.role ?? "Pirate")}</span><span>${status}</span></div>`;
+            const trait = member.crewTrait ? CREW_TRAIT_DETAILS[member.crewTrait].split(":")[0] : "Unremarkable";
+            const reaction = member.crewReaction === "brace" ? " / Bracing" : "";
+            return `<div class="crew-row ${isIncapacitated(member) ? "incapacitated" : ""}"><strong>${escapeHtml(member.name)}</strong><span>${escapeHtml(member.role ?? "Pirate")} / ${trait}</span><span>${status}${reaction}</span></div>`;
           },
         )
         .join("")

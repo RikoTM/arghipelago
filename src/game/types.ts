@@ -17,6 +17,8 @@ export type EnemyAwarenessMode = "investigating" | "pursuing";
 export type Faction = "party" | "boneCrew" | "shoreBrood" | "cinderkin" | "neutral";
 export type LevelId = "surface" | "cave";
 export type CrewOrder = "follow" | "hold" | "rally" | "attack";
+export type CrewTrait = "smokeShy" | "powderShy" | "shipmate";
+export type CrewReaction = "brace" | null;
 export type GamePhase = "playing" | "won" | "lost";
 export type WeatherPhase = "fair" | "squallWarning" | "rain";
 export type Background = "privateer" | "navigator" | "surgeon";
@@ -65,6 +67,10 @@ export interface Actor extends Point {
   role?: string;
   enemyType?: EnemyType;
   enemyAttribute: EnemyAttribute | null;
+  crewTrait: CrewTrait | null;
+  crewReaction: CrewReaction;
+  reactionCooldownUntilTurn: number;
+  stabilized: boolean;
   hp: number;
   maxHp: number;
   melee: number;
@@ -99,7 +105,7 @@ export interface SurfaceWeather {
 }
 
 export interface GameState {
-  version: 11;
+  version: 12;
   seed: string;
   rngState: number;
   levels: Record<LevelId, MapLevel>;
