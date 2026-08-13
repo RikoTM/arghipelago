@@ -7,10 +7,11 @@ The first playable prototype includes:
 - Seeded procedural island generation and fog of war.
 - Eight-direction turn-based movement and melee bump attacks.
 - A flintlock with targeting, noise, ammunition, and reloading.
-- Three recruitable crew members with follow, hold, and rally orders.
+- Three recruitable crew members with spatially delivered follow, hold, rally, and attack orders.
 - Seeded crew traits with hazard, blast, and rescue reactions.
 - Deterministic special enemies with distinct reactive attributes.
 - Spatial noise and terrain-aware enemy investigation.
+- Terrain cover and faction-symmetric melee flanking.
 - Deterministic squalls, rain, wet powder, and coastal dousing.
 - A procedurally generated cave containing a required repair objective.
 - Escalating danger, repair objectives, victory, permadeath, and conditional rescue.

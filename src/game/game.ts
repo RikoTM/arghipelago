@@ -708,12 +708,45 @@ function damageActor(
   }
 }
 
+function terrainCover(state: GameState, target: Actor): number {
+  const map = state.levels[target.level];
+  const terrain = map.tiles[tileIndex(target.x, target.y, map.width)]?.terrain;
+  return terrain === "jungle" || terrain === "rock" || terrain === "wreck" ? 1 : 0;
+}
+
+function projectileDamage(state: GameState, target: Actor, amount: number): number {
+  const cover = terrainCover(state, target);
+  if (cover > 0) addMessage(state, `${target.name}'s terrain cover absorbs part of the shot.`);
+  return Math.max(1, amount - cover);
+}
+
+function hasFlankingAlly(state: GameState, attacker: Actor, target: Actor): boolean {
+  const faction = getFaction(attacker);
+  if (faction === "neutral") return false;
+  const opposite = {
+    x: target.x + target.x - attacker.x,
+    y: target.y + target.y - attacker.y,
+  };
+  return state.actors.some(
+    (actor) =>
+      actor.id !== attacker.id &&
+      actor.id !== target.id &&
+      canAct(actor) &&
+      actor.level === target.level &&
+      getFaction(actor) === faction &&
+      actor.x === opposite.x &&
+      actor.y === opposite.y,
+  );
+}
+
 function meleeAttack(state: GameState, attacker: Actor, target: Actor, rng: Rng, sounds: SoundEvent[]): void {
   const base = attacker.melee + rng.int(2);
   const duelistBonus = attacker.kind === "captain" && state.captainConfig.knack === "duelist" ? 1 : 0;
   const luckyBonus = attacker.kind === "captain" && state.captainConfig.knack === "lucky" && rng.chance(0.25) ? 1 : 0;
-  const damage = base + duelistBonus + luckyBonus;
+  const flankingBonus = hasFlankingAlly(state, attacker, target) ? 1 : 0;
+  const damage = base + duelistBonus + luckyBonus + flankingBonus;
   if (luckyBonus > 0) addMessage(state, "A fortunate wobble improves the captain's attack.");
+  if (flankingBonus > 0) addMessage(state, `${attacker.name} flanks ${target.name} with an ally opposite.`);
   damageActor(state, target, damage, { actor: attacker, label: attacker.name }, sounds);
   if (
     target.alive &&
@@ -1161,7 +1194,10 @@ function runEnemyTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
     if (enemy.enemyType === "bonegunner" && !isWet(state, enemy) && distance(enemy, target) <= 5 && hasLineOfSight(state, enemy, target)) {
       sounds.push(makeSound("gunfire", enemy));
       addMuzzleSmoke(state, enemy);
-      if (rng.chance(0.65)) damageActor(state, target, 2, { actor: enemy, label: enemy.name }, sounds);
+      if (rng.chance(0.65)) {
+        const damage = projectileDamage(state, target, 2);
+        damageActor(state, target, damage, { actor: enemy, label: enemy.name }, sounds);
+      }
       else addMessage(state, `${enemy.name} fires. A nearby tree is gravely inconvenienced.`);
       if (state.phase !== "playing") return;
       continue;
@@ -1444,8 +1480,9 @@ export function fireFlintlock(state: GameState): boolean {
   const accuracy = state.captainConfig.knack === "deadeye" ? 0.95 : state.captainConfig.knack === "lucky" ? 0.85 : 0.78;
   if (rng.chance(accuracy)) {
     const rolledDamage = 5 + rng.int(3);
-    const damage = target.enemyAttribute === "ironclad" ? Math.max(1, rolledDamage - 2) : rolledDamage;
+    const armoredDamage = target.enemyAttribute === "ironclad" ? Math.max(1, rolledDamage - 2) : rolledDamage;
     if (target.enemyAttribute === "ironclad") addMessage(state, `${target.name}'s iron plating absorbs part of the shot.`);
+    const damage = projectileDamage(state, target, armoredDamage);
     damageActor(state, target, damage, { actor: player, label: player.name }, sounds);
   } else {
     addMessage(state, `${player.name} fires and decisively defeats some foliage.`);
@@ -1494,7 +1531,8 @@ export function firePitchShot(state: GameState): boolean {
   const sounds = [makeSound("gunfire", player)];
   state.inventory.loaded = false;
   addMuzzleSmoke(state, player);
-  damageActor(state, target, 2, { actor: player, label: `${player.name}'s pitch shot` }, sounds);
+  const damage = projectileDamage(state, target, 2);
+  damageActor(state, target, damage, { actor: player, label: `${player.name}'s pitch shot` }, sounds);
   const smokeTurns = FIRE_SMOKE_TURNS + (state.currentLevel === "cave" ? 1 : 0);
   if (state.currentLevel !== "surface" || state.surfaceWeather.phase !== "rain") {
     addEnvironment(state, state.currentLevel, target, FIRE_TURNS, smokeTurns);

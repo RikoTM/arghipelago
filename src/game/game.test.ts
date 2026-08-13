@@ -977,6 +977,167 @@ describe("game simulation", () => {
     expect(armoredState.messages.some((message) => message.includes("iron plating"))).toBe(true);
   });
 
+  it("uses jungle, rock, and wreck as cover against projectiles from either side", () => {
+    const shotStates = ["jungle", "rock", "wreck"].map((terrain) => {
+      const open = createGame({ ...captain, knack: "deadeye" }, `captain-cover-${terrain}`);
+      const covered = createGame({ ...captain, knack: "deadeye" }, `captain-cover-${terrain}`);
+      const prepareCaptainShot = (state: ReturnType<typeof createGame>, cover: boolean): Actor | null => {
+        const player = getCaptain(state);
+        const target = state.actors.find(
+          (actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType !== "crab",
+        );
+        if (!target) return null;
+        state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== target.id).forEach((actor) => {
+          actor.alive = false;
+        });
+        for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+        player.x = 20;
+        player.y = 20;
+        target.x = 24;
+        target.y = 20;
+        target.hp = 20;
+        target.maxHp = 20;
+        target.enemyAttribute = null;
+        if (cover) {
+          const targetTile = state.levels.surface.tiles[tileIndex(target.x, target.y, state.levels.surface.width)];
+          if (targetTile) targetTile.terrain = terrain as "jungle" | "rock" | "wreck";
+        }
+        state.rngState = 1;
+        state.targetId = target.id;
+        updateVisibility(state);
+        return target;
+      };
+      const openTarget = prepareCaptainShot(open, false);
+      const coveredTarget = prepareCaptainShot(covered, true);
+      expect(openTarget).not.toBeNull();
+      expect(coveredTarget).not.toBeNull();
+      if (!openTarget || !coveredTarget) return null;
+      fireFlintlock(open);
+      fireFlintlock(covered);
+      return { open, covered, openTarget, coveredTarget };
+    });
+    for (const result of shotStates) {
+      expect(result).not.toBeNull();
+      if (!result) continue;
+      expect(result.coveredTarget.hp).toBe(result.openTarget.hp + 1);
+      expect(result.covered.messages.some((message) => message.includes("terrain cover"))).toBe(true);
+    }
+
+    const open = createGame(captain, "enemy-cover-fire");
+    const covered = createGame(captain, "enemy-cover-fire");
+    const prepareEnemyShot = (state: ReturnType<typeof createGame>, cover: boolean): void => {
+      const player = getCaptain(state);
+      const gunner = state.actors.find((actor) => actor.enemyType === "bonegunner" && actor.level === "surface");
+      if (!gunner) return;
+      state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== gunner.id).forEach((actor) => {
+        actor.alive = false;
+      });
+      for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+      player.x = 20;
+      player.y = 20;
+      gunner.x = 25;
+      gunner.y = 20;
+      gunner.enemyAttribute = null;
+      if (cover) {
+        const playerTile = state.levels.surface.tiles[tileIndex(player.x, player.y, state.levels.surface.width)];
+        if (playerTile) playerTile.terrain = "rock";
+      }
+      state.rngState = 1;
+      pursue(gunner, player);
+    };
+    prepareEnemyShot(open, false);
+    prepareEnemyShot(covered, true);
+
+    waitTurn(open);
+    waitTurn(covered);
+
+    expect(getCaptain(covered).hp).toBe(getCaptain(open).hp + 1);
+    expect(covered.messages.some((message) => message.includes("terrain cover"))).toBe(true);
+  });
+
+  it("adds melee damage when a same-faction ally is exactly opposite the target", () => {
+    const open = createGame({ ...captain, knack: "deadeye" }, "party-flanking");
+    const flanked = createGame({ ...captain, knack: "deadeye" }, "party-flanking");
+    const prepare = (state: ReturnType<typeof createGame>, opposite: boolean): Actor | null => {
+      const player = getCaptain(state);
+      const target = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface");
+      const ally = state.actors.find((actor) => actor.kind === "castaway");
+      if (!target || !ally) return null;
+      state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== target.id).forEach((actor) => {
+        actor.alive = false;
+      });
+      for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+      player.x = 20;
+      player.y = 20;
+      target.x = 21;
+      target.y = 20;
+      target.hp = 20;
+      target.maxHp = 20;
+      target.enemyAttribute = null;
+      ally.kind = "crew";
+      ally.crewAssignment = { order: "hold", targetId: null };
+      ally.crewReaction = "brace";
+      ally.x = opposite ? 22 : 22;
+      ally.y = opposite ? 20 : 21;
+      state.rngState = 1;
+      return target;
+    };
+    const openTarget = prepare(open, false);
+    const flankedTarget = prepare(flanked, true);
+    expect(openTarget).not.toBeNull();
+    expect(flankedTarget).not.toBeNull();
+    if (!openTarget || !flankedTarget) return;
+
+    moveCaptain(open, 1, 0);
+    moveCaptain(flanked, 1, 0);
+
+    expect(flankedTarget.hp).toBe(openTarget.hp - 1);
+    expect(flanked.messages.some((message) => message.includes("flanks") && message.includes("ally opposite"))).toBe(true);
+  });
+
+  it("grants the same flanking bonus to enemy factions", () => {
+    const open = createGame(captain, "enemy-flanking");
+    const flanked = createGame(captain, "enemy-flanking");
+    const prepare = (state: ReturnType<typeof createGame>, opposite: boolean): Actor | null => {
+      const player = getCaptain(state);
+      const skeletons = state.actors.filter(
+        (actor) => actor.enemyType === "skeleton" && actor.level === "surface",
+      ).slice(0, 2);
+      const attacker = skeletons[0];
+      const ally = skeletons[1];
+      if (!attacker || !ally) return null;
+      state.actors.filter((actor) => actor.kind === "enemy" && !skeletons.includes(actor)).forEach((actor) => {
+        actor.alive = false;
+      });
+      for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+      player.x = 20;
+      player.y = 20;
+      attacker.x = 19;
+      attacker.y = 20;
+      attacker.enemyAttribute = null;
+      ally.x = opposite ? 21 : 22;
+      ally.y = opposite ? 20 : 21;
+      ally.enemyAttribute = null;
+      state.rngState = 1;
+      pursue(attacker, player);
+      pursue(ally, player);
+      return attacker;
+    };
+    const openAttacker = prepare(open, false);
+    const flankingAttacker = prepare(flanked, true);
+    expect(openAttacker).not.toBeNull();
+    expect(flankingAttacker).not.toBeNull();
+    if (!openAttacker || !flankingAttacker) return;
+
+    waitTurn(open);
+    waitTurn(flanked);
+
+    const openHit = open.messages.find((message) => message.startsWith(`${openAttacker.name} hits`));
+    const flankedHit = flanked.messages.find((message) => message.startsWith(`${flankingAttacker.name} hits`));
+    expect(Number(flankedHit?.match(/for (\d+)/)?.[1])).toBe(Number(openHit?.match(/for (\d+)/)?.[1]) + 1);
+    expect(flanked.messages.some((message) => message.includes(`${flankingAttacker.name} flanks`))).toBe(true);
+  });
+
   it("has riposting enemies retaliate after surviving melee damage", () => {
     const ordinaryState = createGame(captain, "riposte-comparison");
     const riposteState = createGame(captain, "riposte-comparison");
