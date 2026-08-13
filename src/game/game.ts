@@ -1559,6 +1559,32 @@ export function makeDistraction(state: GameState): boolean {
   return true;
 }
 
+export function throwStone(state: GameState, target: Point): boolean {
+  if (state.phase !== "playing") return false;
+  const player = captain(state);
+  const map = currentMap(state);
+  const tile = map.tiles[tileIndex(target.x, target.y, map.width)];
+  if (
+    !inBounds(target.x, target.y, map.width, map.height) ||
+    !tile?.visible ||
+    distance(player, target) > 6 ||
+    !hasLineOfSight(state, player, target)
+  ) {
+    addMessage(state, "That tile is too far, unseen, or blocked for a reliable throw.");
+    return false;
+  }
+  addMessage(state, `A thrown stone clatters at ${target.x},${target.y}.`);
+  const sound: SoundEvent = {
+    kind: "distraction",
+    sourceActorId: null,
+    level: state.currentLevel,
+    origin: { ...target },
+    radius: 4,
+  };
+  finishTurn(state, [sound]);
+  return true;
+}
+
 export function getCaptain(state: GameState): Actor {
   return captain(state);
 }

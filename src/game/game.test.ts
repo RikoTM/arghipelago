@@ -18,6 +18,7 @@ import {
   makeDistraction,
   moveCaptain,
   reloadFlintlock,
+  throwStone,
   updateVisibility,
   useSmellingSalts,
   useStairs,
@@ -733,6 +734,81 @@ describe("game simulation", () => {
     });
     expect(enemy).toMatchObject({ x: 25, y: 19 });
     expect(state.turn).toBe(1);
+  });
+
+  it("throws a stone to create a remote unattributed lure", () => {
+    const state = createGame(captain, "remote-stone-lure");
+    const player = getCaptain(state);
+    const enemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType !== "crab");
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== enemy.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    enemy.x = 28;
+    enemy.y = 22;
+    enemy.enemyAwareness = null;
+    updateVisibility(state);
+
+    expect(throwStone(state, { x: 24, y: 20 })).toBe(true);
+
+    expect(state.turn).toBe(1);
+    expect(enemy.enemyAwareness).toMatchObject({
+      mode: "investigating",
+      targetId: null,
+      lastKnownPosition: { x: 24, y: 20 },
+    });
+  });
+
+  it("does not spend a turn on unseen, distant, or blocked stone throws", () => {
+    const state = createGame(captain, "bad-stone-throw");
+    const player = getCaptain(state);
+    const map = state.levels.surface;
+    for (const tile of map.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    updateVisibility(state);
+
+    expect(throwStone(state, { x: 27, y: 20 })).toBe(false);
+    const blocker = map.tiles[tileIndex(22, 20, map.width)];
+    if (blocker) blocker.terrain = "rock";
+    expect(throwStone(state, { x: 24, y: 20 })).toBe(false);
+    expect(state.turn).toBe(0);
+  });
+
+  it("redirects separated rival factions toward a stone without damaging them", () => {
+    const state = createGame(captain, "stone-ecology");
+    const player = getCaptain(state);
+    const skeleton = state.actors.find((actor) => actor.enemyType === "skeleton" && actor.level === "surface");
+    const crab = state.actors.find((actor) => actor.enemyType === "crab" && actor.level === "surface");
+    expect(skeleton).toBeDefined();
+    expect(crab).toBeDefined();
+    if (!skeleton || !crab) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== skeleton.id && actor.id !== crab.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 10;
+    player.y = 10;
+    skeleton.x = 20;
+    skeleton.y = 6;
+    skeleton.enemyAwareness = null;
+    crab.x = 20;
+    crab.y = 14;
+    crab.enemyAwareness = null;
+    const skeletonHealth = skeleton.hp;
+    const crabHealth = crab.hp;
+    updateVisibility(state);
+
+    throwStone(state, { x: 16, y: 10 });
+
+    expect(skeleton.hp).toBe(skeletonHealth);
+    expect(crab.hp).toBe(crabHealth);
+    expect(skeleton.enemyAwareness).toMatchObject({ lastKnownPosition: { x: 16, y: 10 } });
+    expect(crab.enemyAwareness).toMatchObject({ lastKnownPosition: { x: 16, y: 10 } });
   });
 
   it("lets keen-eared specials hear beyond the ordinary sound radius", () => {

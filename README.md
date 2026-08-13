@@ -54,6 +54,7 @@ Tests exercise deterministic game creation and validate connected procedural ter
 - `S`: use smelling salts to rescue adjacent crew or restore vigor
 - `D`: make a deliberate noise to lure nearby enemies
 - `P`: fire a pitch-soaked shot after recovering the pitch barrel
+- `T`: enter inspection mode or throw a stone at the selected visible tile
 - `C`: cycle crew orders
 - `A`: order crew to attack the selected target
 - `E`: interact with the wreck or cave stairs

@@ -22,6 +22,7 @@ import {
   makeDistraction,
   moveCaptain,
   reloadFlintlock,
+  throwStone,
   useStairs,
   useSmellingSalts,
   waitTurn,
@@ -78,6 +79,7 @@ const newCaptainButton = requireElement<HTMLButtonElement>("#new-captain-button"
 const fireButton = requireElement<HTMLButtonElement>("#fire-button");
 const crewAttackButton = requireElement<HTMLButtonElement>("#crew-attack-button");
 const pitchShotButton = requireElement<HTMLButtonElement>("#pitch-shot-button");
+const throwStoneButton = requireElement<HTMLButtonElement>("#throw-stone-button");
 const contextButton = requireElement<HTMLButtonElement>("#context-button");
 const controlsHelp = requireElement<HTMLDetailsElement>(".controls-help");
 const inspectionReadout = requireElement<HTMLElement>("#inspection-readout");
@@ -389,9 +391,10 @@ function renderInterface(): void {
   contextButton.classList.toggle("context-ready", onStairs || onWreck || atSurf);
   for (const button of touchActionButtons) {
     button.disabled =
-      activeInspection?.mode === "locked" && button !== contextButton ||
+      activeInspection?.mode === "locked" && button !== contextButton && button !== throwStoneButton ||
       button === pitchShotButton && !state.recoveredParts.pitch;
   }
+  throwStoneButton.textContent = activeInspection?.mode === "locked" ? "Throw here" : "Aim stone";
   renderInspection();
   phaseBanner.hidden = state.phase === "playing";
   const summary = getRunSummary(state);
@@ -441,6 +444,17 @@ function handleAction(action: string): void {
   if (!state) return;
   if (action === "interact" && inspection?.mode === "locked") {
     endInspection();
+    return;
+  }
+  if (action === "throw-stone") {
+    if (inspection?.mode !== "locked") setInspection(getCaptain(state), "locked");
+    else {
+      const point = inspection.point;
+      const previousTurn = state.turn;
+      commitAction(() => throwStone(state as GameState, point));
+      if (state.turn > previousTurn) inspection = null;
+      renderInterface();
+    }
     return;
   }
   if (action === "interact" && getInteractionLabel(state) === "Inspect map") {
@@ -562,6 +576,11 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (inspection?.mode === "locked") {
+    if (event.key.toLowerCase() === "t") {
+      event.preventDefault();
+      handleAction("throw-stone");
+      return;
+    }
     if (
       event.key === "Escape" ||
       event.key === "Enter" ||
@@ -580,6 +599,7 @@ document.addEventListener("keydown", (event) => {
   else if (event.key.toLowerCase() === "s") handleAction("salts");
   else if (event.key.toLowerCase() === "d") handleAction("distract");
   else if (event.key.toLowerCase() === "p") handleAction("pitch-shot");
+  else if (event.key.toLowerCase() === "t") handleAction("throw-stone");
   else if (event.key.toLowerCase() === "x") setInspection(getCaptain(state), "locked");
   else if (event.key === ">" || event.key === "<") commitAction(() => useStairs(state as GameState));
   else if (event.key.toLowerCase() === "e") handleAction("interact");
