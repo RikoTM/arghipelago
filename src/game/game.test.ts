@@ -4,6 +4,7 @@ import {
   createGame,
   cycleCrewOrder,
   fireFlintlock,
+  environmentAt,
   getCaptain,
   getInteractionLabel,
   getRunSummary,
@@ -115,7 +116,8 @@ describe("game simulation", () => {
   it("round-trips the complete active run through JSON storage", () => {
     const state = createGame(captain, "save-round-trip");
     const restored = JSON.parse(JSON.stringify(state)) as typeof state;
-    expect(restored.version).toBe(8);
+    expect(restored.version).toBe(9);
+    expect(restored.environment).toEqual({ surface: [], cave: [] });
     expect(restored).toEqual(state);
     expect(restored.levels.cave.tiles).toHaveLength(state.levels.cave.width * state.levels.cave.height);
   });
@@ -250,6 +252,7 @@ describe("game simulation", () => {
       terrain: null,
       actors: [],
       pickups: [],
+      environment: null,
     });
   });
 
@@ -1226,6 +1229,121 @@ describe("game simulation", () => {
     expect(second.alive).toBe(false);
     expect(player.hp).toBe(playerHealth - 2);
     expect(state.messages.filter((message) => message.includes("bursts in a ring"))).toHaveLength(2);
+  });
+
+  it("creates smoke and one safe jungle fire when a surface slag dies", () => {
+    const state = createGame(captain, "slag-ignition");
+    const player = getCaptain(state);
+    const slag = state.actors.find((actor) => actor.enemyType === "slag" && actor.level === "surface");
+    expect(slag).toBeDefined();
+    if (!slag) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== slag.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    slag.x = 21;
+    slag.y = 20;
+    slag.hp = 1;
+    slag.enemyAttribute = null;
+    pursue(slag, player);
+    const jungle = state.levels.surface.tiles[tileIndex(22, 20, state.levels.surface.width)];
+    if (jungle) jungle.terrain = "jungle";
+
+    moveCaptain(state, 1, 0);
+
+    expect(environmentAt(state, "surface", { x: 21, y: 20 })).toMatchObject({ fireTurns: 0, smokeTurns: 4 });
+    expect(state.environment.surface.filter((effect) => effect.fireTurns > 0)).toHaveLength(1);
+    expect(state.environment.surface.find((effect) => effect.fireTurns > 0)).toMatchObject({
+      x: 22,
+      y: 20,
+      fireTurns: 2,
+      smokeTurns: 4,
+    });
+  });
+
+  it("spreads fire one jungle tile per generation and burns jungle into grass", () => {
+    const state = createGame(captain, "fire-front");
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    for (let x = 20; x <= 22; x += 1) {
+      const tile = state.levels.surface.tiles[tileIndex(x, 20, state.levels.surface.width)];
+      if (tile) tile.terrain = "jungle";
+    }
+    state.environment.surface = [{ x: 20, y: 20, fireTurns: 2, smokeTurns: 4 }];
+
+    waitTurn(state);
+    const firstChild = state.environment.surface.find((effect) => effect.x !== 20 && effect.fireTurns > 0);
+    expect(firstChild).toBeDefined();
+    expect(state.environment.surface.filter((effect) => effect.fireTurns === 3)).toHaveLength(1);
+
+    waitTurn(state);
+    const sourceTile = state.levels.surface.tiles[tileIndex(20, 20, state.levels.surface.width)];
+    expect(sourceTile?.terrain).toBe("grass");
+    expect(state.environment.surface.filter((effect) => effect.fireTurns === 3)).toHaveLength(0);
+
+    waitTurn(state);
+    expect(state.environment.surface.filter((effect) => effect.fireTurns === 3)).toHaveLength(1);
+    expect(environmentAt(state, "surface", { x: 20, y: 20 })).toMatchObject({ fireTurns: 0, smokeTurns: 1 });
+  });
+
+  it("damages actors standing in fire while slags remain immune", () => {
+    const state = createGame(captain, "fire-damage");
+    const player = getCaptain(state);
+    const slag = state.actors.find((actor) => actor.enemyType === "slag" && actor.level === "surface");
+    expect(slag).toBeDefined();
+    if (!slag) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== slag.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    slag.x = 30;
+    slag.y = 20;
+    slag.enemyAwareness = null;
+    state.environment.surface = [
+      { x: 20, y: 20, fireTurns: 2, smokeTurns: 4 },
+      { x: 30, y: 20, fireTurns: 2, smokeTurns: 4 },
+    ];
+    const playerHealth = player.hp;
+    const slagHealth = slag.hp;
+
+    waitTurn(state);
+
+    expect(player.hp).toBe(playerHealth - 2);
+    expect(slag.hp).toBe(slagHealth);
+  });
+
+  it("uses smoke to block sight and conceal distant occupants", () => {
+    const state = createGame(captain, "smoke-screen");
+    const player = getCaptain(state);
+    const enemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType !== "crab");
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    enemy.x = 23;
+    enemy.y = 20;
+    enemy.enemyAwareness = null;
+    state.environment.surface = [{ x: 23, y: 20, fireTurns: 0, smokeTurns: 3 }];
+    updateVisibility(state);
+
+    expect(state.levels.surface.tiles[tileIndex(23, 20, state.levels.surface.width)]?.visible).toBe(true);
+    expect(visibleEnemies(state)).not.toContain(enemy);
+    expect(inspectMapPoint(state, enemy)?.actors).toEqual([]);
+    expect(inspectMapPoint(state, enemy)?.environment).toMatchObject({ smokeTurns: 3 });
+  });
+
+  it("pauses environmental effects on inactive levels", () => {
+    const state = createGame(captain, "paused-cave-fire");
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    state.environment.cave = [{ x: state.caveExit.x, y: state.caveExit.y, fireTurns: 2, smokeTurns: 5 }];
+
+    waitTurn(state);
+    expect(state.environment.cave[0]).toMatchObject({ fireTurns: 2, smokeTurns: 5 });
   });
 
   it("transitions between the surface and cave without activating enemies on the other level", () => {

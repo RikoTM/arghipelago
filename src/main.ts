@@ -39,7 +39,7 @@ import type {
 } from "./game/types";
 import { createRenderer, getMapCamera, moveInspectionCursor, worldPointFromClient } from "./render";
 
-const SAVE_KEY = "arghipelago.active-run.v8";
+const SAVE_KEY = "arghipelago.active-run.v9";
 
 function requireElement<T extends HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -140,9 +140,37 @@ function loadSave(): GameState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GameState>;
     if (
-      parsed.version !== 8 ||
+      parsed.version !== 9 ||
       !parsed.levels?.surface ||
       !parsed.levels.cave ||
+      !parsed.environment?.surface ||
+      !parsed.environment.cave ||
+      (["surface", "cave"] as const).some((level) => {
+        const map = parsed.levels?.[level];
+        const effects = parsed.environment?.[level];
+        if (!map || !effects) return true;
+        const coordinates = new Set<string>();
+        return effects.some((effect) => {
+          const key = `${effect.x},${effect.y}`;
+          const invalid =
+            !Number.isInteger(effect.x) ||
+            !Number.isInteger(effect.y) ||
+            effect.x < 0 ||
+            effect.y < 0 ||
+            effect.x >= map.width ||
+            effect.y >= map.height ||
+            !Number.isInteger(effect.fireTurns) ||
+            !Number.isInteger(effect.smokeTurns) ||
+            effect.fireTurns < 0 ||
+            effect.fireTurns > 3 ||
+            effect.smokeTurns < 0 ||
+            effect.smokeTurns > 6 ||
+            effect.fireTurns + effect.smokeTurns === 0 ||
+            coordinates.has(key);
+          coordinates.add(key);
+          return invalid;
+        });
+      }) ||
       !Array.isArray(parsed.actors) ||
       parsed.actors.some(
         (actor) =>
@@ -201,6 +229,8 @@ function repairRow(part: RepairPart, label: string): string {
 function inspectionDescription(result: MapInspection): string {
   if (result.visibility === "unexplored") return "Unexplored.";
   const details = result.terrain ? [TERRAIN_DETAILS[result.terrain]] : [];
+  if (result.environment?.fireTurns) details.push(`fire, ${result.environment.fireTurns} turns remaining`);
+  if (result.environment?.smokeTurns) details.push(`smoke, ${result.environment.smokeTurns} turns remaining, blocks sight`);
   for (const actor of result.actors) {
     if (actor.kind === "captain") details.push(`${actor.name}, captain, ${actor.hp}/${actor.maxHp} vigor`);
     else if (isIncapacitated(actor)) {

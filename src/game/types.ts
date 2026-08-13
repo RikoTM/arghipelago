@@ -83,11 +83,17 @@ export interface Inventory {
   salts: number;
 }
 
+export interface EnvironmentalTile extends Point {
+  fireTurns: number;
+  smokeTurns: number;
+}
+
 export interface GameState {
-  version: 8;
+  version: 9;
   seed: string;
   rngState: number;
   levels: Record<LevelId, MapLevel>;
+  environment: Record<LevelId, EnvironmentalTile[]>;
   currentLevel: LevelId;
   actors: Actor[];
   pickups: Pickup[];

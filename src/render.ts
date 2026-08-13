@@ -1,5 +1,5 @@
 import { coordinateNoise } from "./game/rng";
-import { getCaptain, getCurrentMap, isEnemyConcealed, isIncapacitated } from "./game/game";
+import { environmentAt, getCaptain, getCurrentMap, isEnemyConcealed, isIncapacitated } from "./game/game";
 import type { Actor, Coat, GameState, MapLevel, PickupType, Point, Terrain } from "./game/types";
 import { tileIndex } from "./game/world";
 
@@ -363,6 +363,35 @@ function actorSprite(actor: Actor): SpriteKind {
   return actor.enemyType ?? "skeleton";
 }
 
+function drawEnvironment(context: CanvasRenderingContext2D, fireTurns: number, smokeTurns: number, x: number, y: number): void {
+  context.save();
+  context.translate(x, y);
+  if (fireTurns > 0) {
+    context.fillStyle = "#8c3f36";
+    context.strokeStyle = INK;
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(7, 31);
+    context.quadraticCurveTo(4, 20, 12, 13);
+    context.quadraticCurveTo(11, 23, 17, 18);
+    context.quadraticCurveTo(24, 10, 25, 29);
+    context.closePath();
+    context.fill();
+    context.stroke();
+  }
+  if (smokeTurns > 0) {
+    context.strokeStyle = "rgba(30, 37, 34, 0.72)";
+    context.lineWidth = 4;
+    context.beginPath();
+    context.moveTo(3, 24);
+    context.bezierCurveTo(10, 17, 2, 11, 12, 6);
+    context.moveTo(15, 29);
+    context.bezierCurveTo(25, 23, 15, 14, 29, 9);
+    context.stroke();
+  }
+  context.restore();
+}
+
 export function createRenderer(canvas: HTMLCanvasElement): Renderer {
   const maybeContext = canvas.getContext("2d");
   if (!maybeContext) throw new Error("Canvas rendering is unavailable.");
@@ -409,13 +438,17 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
           const grain = coordinateNoise(`${state.seed}:${state.currentLevel}`, worldX, worldY);
           context.fillStyle = grain > 0.5 ? "rgba(255,255,255,0.025)" : "rgba(20,20,16,0.025)";
           context.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
+          const environment = environmentAt(state, state.currentLevel, { x: worldX, y: worldY });
+          if (environment) drawEnvironment(context, environment.fireTurns, environment.smokeTurns, screenX, screenY);
         }
       }
     }
 
     for (const pickup of state.pickups) {
       const tile = map.tiles[tileIndex(pickup.x, pickup.y, map.width)];
-      if (pickup.collected || pickup.level !== state.currentLevel || !tile?.visible) continue;
+      const environment = environmentAt(state, state.currentLevel, pickup);
+      const obscured = Boolean(environment?.smokeTurns) && Math.max(Math.abs(pickup.x - player.x), Math.abs(pickup.y - player.y)) > 1;
+      if (pickup.collected || pickup.level !== state.currentLevel || !tile?.visible || obscured) continue;
       context.drawImage(
         sprite(pickup.type, state.captainConfig.coat),
         (pickup.x - cameraX) * TILE_SIZE,
@@ -428,7 +461,9 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
       .sort((a, b) => Number(isIncapacitated(b)) - Number(isIncapacitated(a)));
     for (const actor of drawableActors) {
       const tile = map.tiles[tileIndex(actor.x, actor.y, map.width)];
-      if (!tile?.visible) continue;
+      const environment = environmentAt(state, state.currentLevel, actor);
+      const obscured = Boolean(environment?.smokeTurns) && Math.max(Math.abs(actor.x - player.x), Math.abs(actor.y - player.y)) > 1;
+      if (!tile?.visible || (obscured && actor.kind !== "captain")) continue;
       const screenX = (actor.x - cameraX) * TILE_SIZE;
       const screenY = (actor.y - cameraY) * TILE_SIZE;
       if (actor.id === state.targetId) {

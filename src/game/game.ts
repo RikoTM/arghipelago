@@ -1,10 +1,11 @@
-import { Rng } from "./rng";
+import { coordinateNoise, Rng } from "./rng";
 import type {
   Actor,
   CaptainConfig,
   CrewOrder,
   EnemyAttribute,
   EnemyType,
+  EnvironmentalTile,
   GameState,
   LevelId,
   MapLevel,
@@ -30,12 +31,15 @@ const DIRECTIONS: Point[] = [
 const INCAPACITATION_TURNS = 10;
 const INVESTIGATION_MEMORY = 8;
 const PURSUIT_MEMORY = 10;
+const FIRE_TURNS = 3;
+const FIRE_SMOKE_TURNS = 5;
+const FIRE_DAMAGE = 2;
 
-type SoundKind = "gunfire" | "slagBurst" | "command" | "distraction";
+type SoundKind = "gunfire" | "slagBurst" | "command" | "distraction" | "fireSpread";
 
 interface SoundEvent {
   kind: SoundKind;
-  sourceActorId: number;
+  sourceActorId: number | null;
   level: LevelId;
   origin: Point;
   radius: number;
@@ -46,6 +50,7 @@ const SOUND_RADIUS: Record<SoundKind, number> = {
   slagBurst: 6,
   command: 6,
   distraction: 6,
+  fireSpread: 3,
 };
 
 const REPAIR_NAMES: Record<RepairPart, string> = {
@@ -102,6 +107,7 @@ export interface MapInspection {
   terrain: Terrain | null;
   actors: Actor[];
   pickups: Pickup[];
+  environment: EnvironmentalTile | null;
 }
 
 export interface RunSummary {
@@ -182,19 +188,52 @@ function addMessage(state: GameState, message: string): void {
   if (state.messages.length > 40) state.messages.splice(0, state.messages.length - 40);
 }
 
+export function environmentAt(state: GameState, level: LevelId, point: Point): EnvironmentalTile | null {
+  return state.environment[level].find((effect) => effect.x === point.x && effect.y === point.y) ?? null;
+}
+
+function addEnvironment(
+  state: GameState,
+  level: LevelId,
+  point: Point,
+  fireTurns: number,
+  smokeTurns: number,
+): EnvironmentalTile {
+  const existing = environmentAt(state, level, point);
+  if (existing) {
+    existing.fireTurns = Math.max(existing.fireTurns, fireTurns);
+    existing.smokeTurns = Math.max(existing.smokeTurns, smokeTurns);
+    return existing;
+  }
+  const effect = { x: point.x, y: point.y, fireTurns, smokeTurns };
+  state.environment[level].push(effect);
+  const map = state.levels[level];
+  state.environment[level].sort((a, b) => tileIndex(a.x, a.y, map.width) - tileIndex(b.x, b.y, map.width));
+  return effect;
+}
+
+function smokeBlocksSight(state: GameState, point: Point): boolean {
+  return (environmentAt(state, state.currentLevel, point)?.smokeTurns ?? 0) > 0;
+}
+
 function blocksSight(state: GameState, point: Point): boolean {
   const map = currentMap(state);
   const terrain = map.tiles[tileIndex(point.x, point.y, map.width)]?.terrain;
-  return terrain === "jungle" || terrain === "rock" || terrain === "caveWall";
+  return terrain === "jungle" || terrain === "rock" || terrain === "caveWall" || smokeBlocksSight(state, point);
 }
 
 export function hasLineOfSight(state: GameState, from: Point, to: Point): boolean {
+  if (smokeBlocksSight(state, from) && distance(from, to) > 1) return false;
   const line = lineBetween(from, to);
   for (let index = 1; index < line.length - 1; index += 1) {
     const point = line[index];
     if (point && blocksSight(state, point)) return false;
   }
   return true;
+}
+
+function canSeeActor(state: GameState, observer: Point, target: Point): boolean {
+  return hasLineOfSight(state, observer, target) && (!smokeBlocksSight(state, target) || distance(observer, target) <= 1);
 }
 
 export function updateVisibility(state: GameState): void {
@@ -228,12 +267,13 @@ export function inspectMapPoint(state: GameState, point: Point): MapInspection |
   if (!inBounds(point.x, point.y, map.width, map.height)) return null;
   const tile = map.tiles[tileIndex(point.x, point.y, map.width)];
   if (!tile?.explored) {
-    return { visibility: "unexplored", terrain: null, actors: [], pickups: [] };
+    return { visibility: "unexplored", terrain: null, actors: [], pickups: [], environment: null };
   }
   const visible = tile.visible;
   return {
     visibility: visible ? "visible" : "remembered",
     terrain: tile.terrain,
+    environment: visible ? environmentAt(state, state.currentLevel, point) : null,
     actors: visible
       ? state.actors.filter(
           (actor) =>
@@ -241,7 +281,8 @@ export function inspectMapPoint(state: GameState, point: Point): MapInspection |
             actor.level === state.currentLevel &&
             !isEnemyConcealed(actor) &&
             actor.x === point.x &&
-            actor.y === point.y,
+            actor.y === point.y &&
+            (!smokeBlocksSight(state, point) || distance(captain(state), point) <= 1 || actor.kind === "captain"),
         )
       : [],
     pickups: state.pickups.filter(
@@ -249,7 +290,8 @@ export function inspectMapPoint(state: GameState, point: Point): MapInspection |
         !pickup.collected &&
         pickup.level === state.currentLevel &&
         pickup.x === point.x &&
-        pickup.y === point.y,
+        pickup.y === point.y &&
+        (!smokeBlocksSight(state, point) || distance(captain(state), point) <= 1),
     ),
   };
 }
@@ -421,13 +463,14 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
   assignInitialSpecials(seed, actors, island.wreck, cave.exit);
 
   const state: GameState = {
-    version: 8,
+    version: 9,
     seed,
     rngState: rng.state,
     levels: {
       surface: mapLevel("surface", island.width, island.height, island.tiles),
       cave: mapLevel("cave", cave.width, cave.height, cave.tiles),
     },
+    environment: { surface: [], cave: [] },
     currentLevel: "surface",
     actors,
     pickups,
@@ -467,6 +510,34 @@ function makeSound(kind: SoundKind, actor: Actor): SoundEvent {
   };
 }
 
+function makeEnvironmentalSound(kind: SoundKind, level: LevelId, origin: Point): SoundEvent {
+  return { kind, sourceActorId: null, level, origin: { ...origin }, radius: SOUND_RADIUS[kind] };
+}
+
+function livingActorAtLevel(state: GameState, level: LevelId, point: Point): Actor | undefined {
+  return state.actors.find(
+    (actor) => actor.alive && actor.level === level && actor.x === point.x && actor.y === point.y,
+  );
+}
+
+function igniteFromSlag(state: GameState, slag: Actor): void {
+  const smokeTurns = FIRE_SMOKE_TURNS + (slag.level === "cave" ? 1 : 0);
+  addEnvironment(state, slag.level, slag, 0, smokeTurns);
+  const map = state.levels[slag.level];
+  const candidates = DIRECTIONS.map((direction) => ({ x: slag.x + direction.x, y: slag.y + direction.y }))
+    .filter((point) => {
+      if (!inBounds(point.x, point.y, map.width, map.height) || livingActorAtLevel(state, slag.level, point)) return false;
+      return map.tiles[tileIndex(point.x, point.y, map.width)]?.terrain === "jungle";
+    })
+    .sort((a, b) => {
+      const noiseA = coordinateNoise(`${state.seed}:fire:${slag.level}:${slag.x}:${slag.y}`, a.x, a.y);
+      const noiseB = coordinateNoise(`${state.seed}:fire:${slag.level}:${slag.x}:${slag.y}`, b.x, b.y);
+      return noiseA - noiseB || tileIndex(a.x, a.y, map.width) - tileIndex(b.x, b.y, map.width);
+    });
+  const ignition = candidates[0];
+  if (ignition) addEnvironment(state, slag.level, ignition, FIRE_TURNS, smokeTurns);
+}
+
 function damageActor(
   state: GameState,
   target: Actor,
@@ -501,6 +572,7 @@ function damageActor(
     if (target.kind === "enemy" && target.enemyType === "slag") {
       addMessage(state, `${target.name} bursts in a ring of furnace-hot embers.`);
       sounds.push(makeSound("slagBurst", target));
+      igniteFromSlag(state, target);
       for (const actor of state.actors) {
         if (canAct(actor) && actor.level === target.level && distance(actor, target) <= 1) {
           damageActor(state, actor, 2, `${target.name}'s fiery collapse`, sounds);
@@ -581,25 +653,30 @@ function bestStepToward(
 ): Point | null {
   if (distance(actor, destination) <= desiredDistance) return null;
   const map = currentMap(state);
-  const queue: Array<{ point: Point; firstStep: Point | null }> = [
-    { point: { x: actor.x, y: actor.y }, firstStep: null },
+  const frontier: Array<{ point: Point; firstStep: Point | null; cost: number }> = [
+    { point: { x: actor.x, y: actor.y }, firstStep: null, cost: 0 },
   ];
-  const seen = new Set<number>([tileIndex(actor.x, actor.y, map.width)]);
+  const bestCosts = new Map<number, number>([[tileIndex(actor.x, actor.y, map.width), 0]]);
 
-  for (let cursor = 0; cursor < queue.length; cursor += 1) {
-    const current = queue[cursor];
-    if (!current) continue;
+  while (frontier.length > 0) {
+    frontier.sort((a, b) => a.cost - b.cost || a.point.y - b.point.y || a.point.x - b.point.x);
+    const current = frontier.shift();
+    if (!current) break;
     for (const direction of DIRECTIONS) {
       const point = { x: current.point.x + direction.x, y: current.point.y + direction.y };
       if (!inBounds(point.x, point.y, map.width, map.height)) continue;
       const index = tileIndex(point.x, point.y, map.width);
-      if (seen.has(index)) continue;
       const tile = map.tiles[index];
       if (!tile || !isPassableTerrain(tile.terrain) || actorAt(state, point.x, point.y, actor.id)) continue;
-      seen.add(index);
+      const environment = environmentAt(state, state.currentLevel, point);
+      const hazardCost = (environment?.smokeTurns ? 2 : 0) +
+        (environment?.fireTurns && actor.enemyType !== "slag" ? 12 : 0);
+      const cost = current.cost + 1 + hazardCost;
+      if (cost >= (bestCosts.get(index) ?? Number.POSITIVE_INFINITY)) continue;
+      bestCosts.set(index, cost);
       const firstStep = current.firstStep ?? point;
       if (distance(point, destination) <= desiredDistance) return firstStep;
-      queue.push({ point, firstStep });
+      frontier.push({ point, firstStep, cost });
     }
   }
   return null;
@@ -608,24 +685,19 @@ function bestStepToward(
 function bestStepAway(state: GameState, actor: Actor, threat: Point): Point | null {
   const map = currentMap(state);
   const currentDistance = distance(actor, threat);
-  let best: Point | null = null;
-  let bestDistance = currentDistance;
-  for (const direction of DIRECTIONS) {
-    const point = { x: actor.x + direction.x, y: actor.y + direction.y };
-    if (!inBounds(point.x, point.y, map.width, map.height)) continue;
-    const tile = map.tiles[tileIndex(point.x, point.y, map.width)];
-    const candidateDistance = distance(point, threat);
-    if (
-      tile &&
-      isPassableTerrain(tile.terrain) &&
-      !actorAt(state, point.x, point.y, actor.id) &&
-      candidateDistance > bestDistance
-    ) {
-      best = point;
-      bestDistance = candidateDistance;
-    }
-  }
-  return best;
+  return DIRECTIONS.map((direction) => ({ x: actor.x + direction.x, y: actor.y + direction.y }))
+    .filter((point) => {
+      if (!inBounds(point.x, point.y, map.width, map.height) || distance(point, threat) <= currentDistance) return false;
+      const tile = map.tiles[tileIndex(point.x, point.y, map.width)];
+      return Boolean(tile && isPassableTerrain(tile.terrain) && !actorAt(state, point.x, point.y, actor.id));
+    })
+    .sort((a, b) => {
+      const effectA = environmentAt(state, state.currentLevel, a);
+      const effectB = environmentAt(state, state.currentLevel, b);
+      const hazardA = (effectA?.smokeTurns ? 2 : 0) + (effectA?.fireTurns && actor.enemyType !== "slag" ? 12 : 0);
+      const hazardB = (effectB?.smokeTurns ? 2 : 0) + (effectB?.fireTurns && actor.enemyType !== "slag" ? 12 : 0);
+      return hazardA - hazardB || distance(b, threat) - distance(a, threat) || tileIndex(a.x, a.y, map.width) - tileIndex(b.x, b.y, map.width);
+    })[0] ?? null;
 }
 
 function runCrewTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
@@ -685,7 +757,7 @@ function seenPartyTarget(state: GameState, enemy: Actor): Actor | null {
         actor.level === enemy.level &&
         (actor.kind === "captain" || actor.kind === "crew") &&
         distance(enemy, actor) <= detectionRange &&
-        hasLineOfSight(state, enemy, actor),
+        canSeeActor(state, enemy, actor),
     )
     .sort((a, b) => distance(enemy, a) - distance(enemy, b) || a.id - b.id)[0] ?? null;
 }
@@ -755,6 +827,63 @@ function resolveSounds(state: GameState, sounds: SoundEvent[]): void {
     }
   }
   sounds.length = 0;
+}
+
+function fireSpreadCandidate(state: GameState, source: EnvironmentalTile): Point | null {
+  const map = currentMap(state);
+  const candidates = DIRECTIONS.map((direction) => ({ x: source.x + direction.x, y: source.y + direction.y }))
+    .filter((point) => {
+      if (!inBounds(point.x, point.y, map.width, map.height) || livingActorAtLevel(state, state.currentLevel, point)) return false;
+      return map.tiles[tileIndex(point.x, point.y, map.width)]?.terrain === "jungle" &&
+        (environmentAt(state, state.currentLevel, point)?.fireTurns ?? 0) === 0;
+    })
+    .sort((a, b) => {
+      const noiseA = coordinateNoise(`${state.seed}:fire:${state.currentLevel}:${source.x}:${source.y}`, a.x, a.y);
+      const noiseB = coordinateNoise(`${state.seed}:fire:${state.currentLevel}:${source.x}:${source.y}`, b.x, b.y);
+      return noiseA - noiseB || tileIndex(a.x, a.y, map.width) - tileIndex(b.x, b.y, map.width);
+    });
+  return candidates[0] ?? null;
+}
+
+function resolveEnvironment(state: GameState, sounds: SoundEvent[]): void {
+  const level = state.currentLevel;
+  const map = currentMap(state);
+  const effects = state.environment[level];
+  const spreadSources = effects.filter((effect) => effect.fireTurns === 2);
+  const newFires: Point[] = [];
+  for (const source of spreadSources) {
+    const candidate = fireSpreadCandidate(state, source);
+    if (candidate) newFires.push(candidate);
+  }
+
+  for (const effect of effects) {
+    if (effect.fireTurns > 0) {
+      for (const actor of state.actors) {
+        if (
+          canAct(actor) &&
+          actor.level === level &&
+          actor.enemyType !== "slag" &&
+          actor.x === effect.x &&
+          actor.y === effect.y
+        ) {
+          damageActor(state, actor, FIRE_DAMAGE, "The fire", sounds);
+        }
+      }
+      effect.fireTurns -= 1;
+      if (effect.fireTurns === 0) {
+        const tile = map.tiles[tileIndex(effect.x, effect.y, map.width)];
+        if (tile?.terrain === "jungle") tile.terrain = "grass";
+      }
+    }
+    if (effect.smokeTurns > 0) effect.smokeTurns -= 1;
+  }
+
+  for (const point of newFires) {
+    const smokeTurns = FIRE_SMOKE_TURNS + (level === "cave" ? 1 : 0);
+    addEnvironment(state, level, point, FIRE_TURNS, smokeTurns);
+    sounds.push(makeEnvironmentalSound("fireSpread", level, point));
+  }
+  state.environment[level] = effects.filter((effect) => effect.fireTurns > 0 || effect.smokeTurns > 0);
 }
 
 function runEnemyTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
@@ -859,6 +988,8 @@ function finishTurn(state: GameState, sounds: SoundEvent[] = []): void {
   runCrewTurns(state, rng, sounds);
   resolveSounds(state, sounds);
   runEnemyTurns(state, rng, sounds);
+  resolveSounds(state, sounds);
+  resolveEnvironment(state, sounds);
   resolveSounds(state, sounds);
   spawnEscalation(state, rng);
   state.rngState = rng.state;
@@ -1014,6 +1145,7 @@ export function visibleEnemies(state: GameState): Actor[] {
         actor.kind === "enemy" &&
         !isEnemyConcealed(actor) &&
         tile?.visible &&
+        (!smokeBlocksSight(state, actor) || distance(player, actor) <= 1) &&
         distance(player, actor) <= 8;
     })
     .sort((a, b) => distance(player, a) - distance(player, b));
@@ -1044,7 +1176,7 @@ export function fireFlintlock(state: GameState): boolean {
       !isEnemyConcealed(actor),
   );
   if (!target) target = visibleEnemies(state)[0];
-  if (!target || distance(player, target) > 8 || !hasLineOfSight(state, player, target)) {
+  if (!target || distance(player, target) > 8 || !canSeeActor(state, player, target)) {
     addMessage(state, "No clear target presents itself.");
     return false;
   }
@@ -1115,7 +1247,7 @@ export function commandCrewAttack(state: GameState): boolean {
       actor.kind !== "enemy" ||
       isEnemyConcealed(actor)
     ) return false;
-    return map.tiles[tileIndex(actor.x, actor.y, map.width)]?.visible;
+    return map.tiles[tileIndex(actor.x, actor.y, map.width)]?.visible && canSeeActor(state, captain(state), actor);
   });
   if (!target) {
     addMessage(state, "Select a visible enemy before ordering the crew to attack.");
