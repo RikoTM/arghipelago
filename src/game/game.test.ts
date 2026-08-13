@@ -12,8 +12,10 @@ import {
   inspectMapPoint,
   interact,
   isAttributeCompatible,
+  isWet,
   makeDistraction,
   moveCaptain,
+  reloadFlintlock,
   updateVisibility,
   useSmellingSalts,
   useStairs,
@@ -117,8 +119,9 @@ describe("game simulation", () => {
   it("round-trips the complete active run through JSON storage", () => {
     const state = createGame(captain, "save-round-trip");
     const restored = JSON.parse(JSON.stringify(state)) as typeof state;
-    expect(restored.version).toBe(9);
+    expect(restored.version).toBe(10);
     expect(restored.environment).toEqual({ surface: [], cave: [] });
+    expect(restored.surfaceWeather.phase).toBe("fair");
     expect(restored).toEqual(state);
     expect(restored.levels.cave.tiles).toHaveLength(state.levels.cave.width * state.levels.cave.height);
   });
@@ -232,6 +235,8 @@ describe("game simulation", () => {
     const player = getCaptain(state);
     player.x = state.wreck.x;
     player.y = state.wreck.y - 1;
+    const inland = state.levels.surface.tiles[tileIndex(player.x, player.y, state.levels.surface.width)];
+    if (inland) inland.terrain = "grass";
 
     expect(interact(state)).toBe(false);
     expect(state.turn).toBe(0);
@@ -1394,6 +1399,132 @@ describe("game simulation", () => {
 
     waitTurn(state);
     expect(state.environment.cave[0]).toMatchObject({ fireTurns: 2, smokeTurns: 5 });
+  });
+
+  it("warns before deterministic rain and does not perturb simulation RNG", () => {
+    const state = createGame(captain, "weather-schedule");
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    const rngState = state.rngState;
+    const warningTurn = state.surfaceWeather.transitionTurn;
+    expect(warningTurn).toBeGreaterThanOrEqual(45);
+    expect(warningTurn).toBeLessThanOrEqual(64);
+    for (let turn = 0; turn < warningTurn; turn += 1) waitTurn(state);
+
+    expect(state.surfaceWeather.phase).toBe("squallWarning");
+    expect(state.surfaceWeather.transitionTurn).toBe(warningTurn + 3);
+    expect(state.rngState).toBe(rngState);
+    for (let turn = 0; turn < 3; turn += 1) waitTurn(state);
+    expect(state.surfaceWeather.phase).toBe("rain");
+    expect(state.turn).toBeGreaterThanOrEqual(48);
+  });
+
+  it("wets exposed surface actors during rain but shelters jungle and cave actors", () => {
+    const state = createGame(captain, "rain-exposure");
+    const player = getCaptain(state);
+    const exposed = state.actors.find((actor) => actor.kind === "castaway");
+    const sheltered = state.actors.filter((actor) => actor.kind === "castaway")[1];
+    const caveEnemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "cave");
+    expect(exposed).toBeDefined();
+    expect(sheltered).toBeDefined();
+    expect(caveEnemy).toBeDefined();
+    if (!exposed || !sheltered || !caveEnemy) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.level === "surface").forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    exposed.x = 21;
+    exposed.y = 20;
+    sheltered.x = 22;
+    sheltered.y = 20;
+    const shelter = state.levels.surface.tiles[tileIndex(22, 20, state.levels.surface.width)];
+    if (shelter) shelter.terrain = "jungle";
+    state.surfaceWeather = { phase: "rain", transitionTurn: 100, cycle: 0 };
+
+    waitTurn(state);
+
+    expect(isWet(state, player)).toBe(true);
+    expect(isWet(state, exposed)).toBe(true);
+    expect(isWet(state, sheltered)).toBe(false);
+    expect(isWet(state, caveEnemy)).toBe(false);
+  });
+
+  it("extinguishes surface fire and smoke during rain while cave hazards continue", () => {
+    const state = createGame(captain, "rain-extinguishing");
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    state.surfaceWeather = { phase: "rain", transitionTurn: 100, cycle: 0 };
+    state.environment.surface = [{ x: state.wreck.x, y: state.wreck.y, fireTurns: 3, smokeTurns: 5 }];
+    state.environment.cave = [{ x: state.caveExit.x, y: state.caveExit.y, fireTurns: 3, smokeTurns: 6 }];
+
+    waitTurn(state);
+
+    expect(state.environment.surface).toEqual([]);
+    expect(state.environment.cave[0]).toMatchObject({ fireTurns: 3, smokeTurns: 6 });
+  });
+
+  it("rejects firing and reloading while the captain is wet without spending resources", () => {
+    const state = createGame(captain, "wet-powder");
+    const player = getCaptain(state);
+    const target = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType !== "crab");
+    expect(target).toBeDefined();
+    if (!target) return;
+    player.wetUntilTurn = 5;
+    target.x = player.x + 2;
+    target.y = player.y;
+    state.targetId = target.id;
+    updateVisibility(state);
+    const rngState = state.rngState;
+
+    expect(fireFlintlock(state)).toBe(false);
+    expect(state.turn).toBe(0);
+    expect(state.inventory.loaded).toBe(true);
+    state.inventory.loaded = false;
+    expect(reloadFlintlock(state)).toBe(false);
+    expect(state.turn).toBe(0);
+    expect(state.inventory.ammo).toBe(6);
+    expect(state.rngState).toBe(rngState);
+  });
+
+  it("douses the nearby party at the surf for one turn of tactical protection", () => {
+    const state = createGame(captain, "surf-dousing");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    expect(crew).toBeDefined();
+    if (!crew) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    const map = state.levels.surface;
+    player.x = 20;
+    player.y = 20;
+    const sand = map.tiles[tileIndex(20, 20, map.width)];
+    const water = map.tiles[tileIndex(20, 19, map.width)];
+    if (sand) sand.terrain = "sand";
+    if (water) water.terrain = "water";
+    crew.kind = "crew";
+    crew.x = 21;
+    crew.y = 20;
+
+    expect(getInteractionLabel(state)).toBe("Douse in surf");
+    expect(interact(state)).toBe(true);
+    expect(state.turn).toBe(1);
+    expect(isWet(state, player)).toBe(true);
+    expect(isWet(state, crew)).toBe(true);
+  });
+
+  it("reduces environmental fire damage for wet actors", () => {
+    const dry = createGame(captain, "wet-fire-resistance");
+    const wet = createGame(captain, "wet-fire-resistance");
+    for (const state of [dry, wet]) {
+      state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+      const player = getCaptain(state);
+      state.environment.surface = [{ x: player.x, y: player.y, fireTurns: 2, smokeTurns: 4 }];
+    }
+    getCaptain(wet).wetUntilTurn = 5;
+
+    waitTurn(dry);
+    waitTurn(wet);
+
+    expect(getCaptain(wet).hp).toBe(getCaptain(dry).hp + 1);
   });
 
   it("transitions between the surface and cave without activating enemies on the other level", () => {

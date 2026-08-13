@@ -17,6 +17,7 @@ import {
   inspectMapPoint,
   interact,
   isIncapacitated,
+  isWet,
   makeDistraction,
   moveCaptain,
   reloadFlintlock,
@@ -40,7 +41,7 @@ import type {
 } from "./game/types";
 import { createRenderer, getMapCamera, moveInspectionCursor, worldPointFromClient } from "./render";
 
-const SAVE_KEY = "arghipelago.active-run.v9";
+const SAVE_KEY = "arghipelago.active-run.v10";
 
 function requireElement<T extends HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -142,11 +143,15 @@ function loadSave(): GameState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GameState>;
     if (
-      parsed.version !== 9 ||
+      parsed.version !== 10 ||
       !parsed.levels?.surface ||
       !parsed.levels.cave ||
       !parsed.environment?.surface ||
       !parsed.environment.cave ||
+      !parsed.surfaceWeather ||
+      !["fair", "squallWarning", "rain"].includes(parsed.surfaceWeather.phase) ||
+      !Number.isInteger(parsed.surfaceWeather.transitionTurn) ||
+      !Number.isInteger(parsed.surfaceWeather.cycle) ||
       (["surface", "cave"] as const).some((level) => {
         const map = parsed.levels?.[level];
         const effects = parsed.environment?.[level];
@@ -177,6 +182,8 @@ function loadSave(): GameState | null {
       parsed.actors.some(
         (actor) =>
           !Number.isInteger(actor.incapacitatedTurns) ||
+          !Number.isInteger(actor.wetUntilTurn) ||
+          actor.wetUntilTurn < 0 ||
           actor.incapacitatedTurns < 0 ||
           actor.incapacitatedTurns > 10 ||
           (actor.incapacitatedTurns > 0 && (actor.kind !== "crew" || !actor.alive || actor.hp !== 0)) ||
@@ -248,6 +255,7 @@ function inspectionDescription(result: MapInspection): string {
       const attribute = actor.enemyAttribute ? `, ${ENEMY_ATTRIBUTE_DETAILS[actor.enemyAttribute]}` : "";
       details.push(`${actor.name}, ${behavior}, ${actor.hp}/${actor.maxHp} vigor, ${tactic}${attribute}`);
     }
+    if (isWet(state as GameState, actor)) details.push(`${actor.name} is wet; firearms and fire behave differently`);
   }
   for (const pickup of result.pickups) details.push(`${PICKUP_DETAILS[pickup.type]} here`);
   const prefix = result.visibility === "remembered" ? "Remembered: " : "Visible: ";
@@ -307,9 +315,9 @@ function renderInterface(): void {
   captainHeading.textContent = `Captain ${player.name}`;
   captainStats.innerHTML = `
     <div class="health-line"><span>VIGOR</span><strong>${healthPips(player.hp, player.maxHp)}</strong><span>${player.hp}/${player.maxHp}</span></div>
-    <div class="equipment-line"><span>Cutlass</span><span>Flintlock: ${state.inventory.loaded ? "loaded" : "empty"}</span></div>
+    <div class="equipment-line"><span>Cutlass</span><span>Flintlock: ${isWet(state, player) ? "damp" : state.inventory.loaded ? "loaded" : "empty"}</span></div>
     <div class="equipment-line"><span>Shot: ${state.inventory.ammo}</span><span>Salts: ${state.inventory.salts}</span></div>
-    <div class="seed-line">Chart: ${escapeHtml(state.seed)} / ${state.currentLevel === "surface" ? "Island" : "Cave"}</div>
+    <div class="seed-line">Chart: ${escapeHtml(state.seed)} / ${state.currentLevel === "surface" ? `Island / ${state.surfaceWeather.phase === "rain" ? "Heavy rain" : state.surfaceWeather.phase === "squallWarning" ? "Squall building" : "Fair"}` : "Cave / Sheltered underground"}</div>
   `;
   turnCount.textContent = `Turn ${state.turn}`;
   dangerLevel.textContent = state.dangerLevel === 0 ? "Quiet-ish" : state.dangerLevel === 1 ? "Restless" : "Very noticed";
@@ -331,7 +339,7 @@ function renderInterface(): void {
           (member) => {
             const status = isIncapacitated(member)
               ? `Incapacitated: ${member.incapacitatedTurns} turns`
-              : `${member.hp}/${member.maxHp} vigor`;
+              : `${member.hp}/${member.maxHp} vigor${isWet(state as GameState, member) ? " / Wet" : ""}`;
             return `<div class="crew-row ${isIncapacitated(member) ? "incapacitated" : ""}"><strong>${escapeHtml(member.name)}</strong><span>${escapeHtml(member.role ?? "Pirate")}</span><span>${status}</span></div>`;
           },
         )
@@ -351,8 +359,9 @@ function renderInterface(): void {
     (state.currentLevel === "surface" && player.x === state.caveEntrance.x && player.y === state.caveEntrance.y) ||
     (state.currentLevel === "cave" && player.x === state.caveExit.x && player.y === state.caveExit.y);
   const onWreck = state.currentLevel === "surface" && player.x === state.wreck.x && player.y === state.wreck.y;
+  const atSurf = getInteractionLabel(state) === "Douse in surf";
   contextButton.textContent = activeInspection?.mode === "locked" ? "Done inspecting" : getInteractionLabel(state);
-  contextButton.classList.toggle("context-ready", onStairs || onWreck);
+  contextButton.classList.toggle("context-ready", onStairs || onWreck || atSurf);
   for (const button of touchActionButtons) {
     button.disabled =
       activeInspection?.mode === "locked" && button !== contextButton ||

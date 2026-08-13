@@ -17,6 +17,7 @@ export type EnemyAwarenessMode = "investigating" | "pursuing";
 export type LevelId = "surface" | "cave";
 export type CrewOrder = "follow" | "hold" | "rally" | "attack";
 export type GamePhase = "playing" | "won" | "lost";
+export type WeatherPhase = "fair" | "squallWarning" | "rain";
 export type Background = "privateer" | "navigator" | "surgeon";
 export type Knack = "duelist" | "deadeye" | "lucky";
 export type Coat = "crimson" | "navy" | "moss";
@@ -67,6 +68,7 @@ export interface Actor extends Point {
   melee: number;
   alive: boolean;
   incapacitatedTurns: number;
+  wetUntilTurn: number;
   enemyAwareness: EnemyAwareness | null;
 }
 
@@ -88,8 +90,14 @@ export interface EnvironmentalTile extends Point {
   smokeTurns: number;
 }
 
+export interface SurfaceWeather {
+  phase: WeatherPhase;
+  transitionTurn: number;
+  cycle: number;
+}
+
 export interface GameState {
-  version: 9;
+  version: 10;
   seed: string;
   rngState: number;
   levels: Record<LevelId, MapLevel>;
@@ -105,6 +113,7 @@ export interface GameState {
   turn: number;
   threat: number;
   dangerLevel: number;
+  surfaceWeather: SurfaceWeather;
   crewOrder: CrewOrder;
   crewTargetId: number | null;
   inventory: Inventory;

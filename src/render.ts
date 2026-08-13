@@ -1,5 +1,5 @@
 import { coordinateNoise } from "./game/rng";
-import { environmentAt, getCaptain, getCurrentMap, isEnemyConcealed, isIncapacitated } from "./game/game";
+import { environmentAt, getCaptain, getCurrentMap, isEnemyConcealed, isIncapacitated, isWet } from "./game/game";
 import type { Actor, Coat, GameState, MapLevel, PickupType, Point, Terrain } from "./game/types";
 import { tileIndex } from "./game/world";
 
@@ -444,6 +444,21 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
       }
     }
 
+    if (state.currentLevel === "surface" && state.surfaceWeather.phase === "rain") {
+      context.save();
+      context.strokeStyle = "rgba(57, 77, 89, 0.35)";
+      context.lineWidth = 1;
+      for (let y = 4; y < canvas.height; y += 24) {
+        for (let x = (y / 24 % 2) * 12; x < canvas.width; x += 32) {
+          context.beginPath();
+          context.moveTo(x, y);
+          context.lineTo(x - 5, y + 10);
+          context.stroke();
+        }
+      }
+      context.restore();
+    }
+
     for (const pickup of state.pickups) {
       const tile = map.tiles[tileIndex(pickup.x, pickup.y, map.width)];
       const environment = environmentAt(state, state.currentLevel, pickup);
@@ -489,6 +504,17 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
         context.lineTo(screenX + 26, screenY + 11);
         context.lineTo(screenX + 22, screenY + 7);
         context.closePath();
+        context.fill();
+        context.stroke();
+      }
+      if (isWet(state, actor)) {
+        context.fillStyle = "#394d59";
+        context.strokeStyle = PAPER;
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(screenX + 5, screenY + 4);
+        context.quadraticCurveTo(screenX + 1, screenY + 9, screenX + 5, screenY + 12);
+        context.quadraticCurveTo(screenX + 9, screenY + 9, screenX + 5, screenY + 4);
         context.fill();
         context.stroke();
       }

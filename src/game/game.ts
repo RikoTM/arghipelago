@@ -14,6 +14,7 @@ import type {
   Point,
   RepairPart,
   Terrain,
+  WeatherPhase,
 } from "./types";
 import { generateCave, generateIsland, inBounds, isPassableTerrain, lineBetween, mapLevel, tileIndex } from "./world";
 
@@ -35,6 +36,8 @@ const FIRE_TURNS = 3;
 const FIRE_SMOKE_TURNS = 5;
 const FIRE_DAMAGE = 2;
 const MUZZLE_SMOKE_TURNS = 3;
+const RAIN_WET_TURNS = 2;
+const SURF_WET_TURNS = 4;
 
 type SoundKind = "gunfire" | "slagBurst" | "command" | "distraction" | "fireSpread";
 
@@ -103,6 +106,8 @@ const ATTRIBUTE_COMPATIBILITY: Record<EnemyAttribute, EnemyType[]> = {
 
 const ENEMY_ATTRIBUTES = Object.keys(ATTRIBUTE_NAMES) as EnemyAttribute[];
 
+const RAIN_EXPOSED_TERRAIN: Terrain[] = ["sand", "grass", "rock"];
+
 export interface MapInspection {
   visibility: "unexplored" | "remembered" | "visible";
   terrain: Terrain | null;
@@ -127,6 +132,10 @@ export function isEnemyConcealed(actor: Actor): boolean {
 
 export function isIncapacitated(actor: Actor): boolean {
   return actor.alive && actor.kind === "crew" && actor.incapacitatedTurns > 0;
+}
+
+export function isWet(state: GameState, actor: Actor): boolean {
+  return actor.wetUntilTurn > state.turn;
 }
 
 export function getRunSummary(state: GameState): RunSummary | null {
@@ -324,6 +333,7 @@ function makeEnemy(id: number, type: EnemyType, point: Point, rng: Rng, level: L
     melee,
     alive: true,
     incapacitatedTurns: 0,
+    wetUntilTurn: 0,
     enemyAwareness: null,
   };
 }
@@ -391,6 +401,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       melee: 2,
       alive: true,
       incapacitatedTurns: 0,
+      wetUntilTurn: 0,
       enemyAwareness: null,
     },
   ];
@@ -413,6 +424,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       melee: recruit.melee,
       alive: true,
       incapacitatedTurns: 0,
+      wetUntilTurn: 0,
       enemyAwareness: null,
     });
     nextId += 1;
@@ -464,7 +476,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
   assignInitialSpecials(seed, actors, island.wreck, cave.exit);
 
   const state: GameState = {
-    version: 9,
+    version: 10,
     seed,
     rngState: rng.state,
     levels: {
@@ -483,6 +495,11 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
     turn: 0,
     threat: 0,
     dangerLevel: 0,
+    surfaceWeather: {
+      phase: "fair",
+      transitionTurn: 45 + new Rng(`${seed}:weather:0:fair`).int(20),
+      cycle: 0,
+    },
     crewOrder: "follow",
     crewTargetId: null,
     inventory: { loaded: true, ammo: 6, salts: config.background === "surgeon" ? 2 : 1 },
@@ -519,6 +536,50 @@ function addMuzzleSmoke(state: GameState, shooter: Actor): void {
   addEnvironment(state, shooter.level, shooter, 0, MUZZLE_SMOKE_TURNS + (shooter.level === "cave" ? 1 : 0));
 }
 
+function weatherDuration(seed: string, cycle: number, phase: WeatherPhase): number {
+  const rng = new Rng(`${seed}:weather:${cycle}:${phase}`);
+  if (phase === "squallWarning") return 3;
+  if (phase === "rain") return 8 + rng.int(5);
+  return 32 + rng.int(20);
+}
+
+function advanceWeather(state: GameState): void {
+  if (state.turn < state.surfaceWeather.transitionTurn) return;
+  const previous = state.surfaceWeather.phase;
+  if (previous === "fair") state.surfaceWeather.phase = "squallWarning";
+  else if (previous === "squallWarning") state.surfaceWeather.phase = "rain";
+  else {
+    state.surfaceWeather.phase = "fair";
+    state.surfaceWeather.cycle += 1;
+  }
+  state.surfaceWeather.transitionTurn = state.turn + weatherDuration(
+    state.seed,
+    state.surfaceWeather.cycle,
+    state.surfaceWeather.phase,
+  );
+  if (state.currentLevel === "surface") {
+    const message = state.surfaceWeather.phase === "rain"
+      ? "The squall breaks. Heavy rain hammers the island and drowns exposed flame."
+      : state.surfaceWeather.phase === "squallWarning"
+        ? "The wind turns cold and the horizon gathers an unreasonable amount of cloud."
+        : "The rain passes, leaving the island steaming and offended.";
+    addMessage(state, message);
+  }
+}
+
+function applyRain(state: GameState): void {
+  if (state.surfaceWeather.phase !== "rain") return;
+  const surface = state.levels.surface;
+  for (const actor of state.actors) {
+    if (!actor.alive || actor.level !== "surface") continue;
+    const terrain = surface.tiles[tileIndex(actor.x, actor.y, surface.width)]?.terrain;
+    if (terrain && RAIN_EXPOSED_TERRAIN.includes(terrain)) {
+      actor.wetUntilTurn = Math.max(actor.wetUntilTurn, state.turn + RAIN_WET_TURNS);
+    }
+  }
+  state.environment.surface = [];
+}
+
 function livingActorAtLevel(state: GameState, level: LevelId, point: Point): Actor | undefined {
   return state.actors.find(
     (actor) => actor.alive && actor.level === level && actor.x === point.x && actor.y === point.y,
@@ -527,6 +588,7 @@ function livingActorAtLevel(state: GameState, level: LevelId, point: Point): Act
 
 function igniteFromSlag(state: GameState, slag: Actor): void {
   const smokeTurns = FIRE_SMOKE_TURNS + (slag.level === "cave" ? 1 : 0);
+  if (slag.level === "surface" && state.surfaceWeather.phase === "rain") return;
   addEnvironment(state, slag.level, slag, 0, smokeTurns);
   const map = state.levels[slag.level];
   const candidates = DIRECTIONS.map((direction) => ({ x: slag.x + direction.x, y: slag.y + direction.y }))
@@ -578,9 +640,11 @@ function damageActor(
       addMessage(state, `${target.name} bursts in a ring of furnace-hot embers.`);
       sounds.push(makeSound("slagBurst", target));
       igniteFromSlag(state, target);
+      const burstDamage = isWet(state, target) ? 1 : 2;
       for (const actor of state.actors) {
         if (canAct(actor) && actor.level === target.level && distance(actor, target) <= 1) {
-          damageActor(state, actor, 2, `${target.name}'s fiery collapse`, sounds);
+          const damage = Math.max(0, burstDamage - (isWet(state, actor) ? 1 : 0));
+          if (damage > 0) damageActor(state, actor, damage, `${target.name}'s fiery collapse`, sounds);
         }
       }
     }
@@ -871,7 +935,8 @@ function resolveEnvironment(state: GameState, sounds: SoundEvent[]): void {
           actor.x === effect.x &&
           actor.y === effect.y
         ) {
-          damageActor(state, actor, FIRE_DAMAGE, "The fire", sounds);
+          const damage = isWet(state, actor) ? FIRE_DAMAGE - 1 : FIRE_DAMAGE;
+          if (damage > 0) damageActor(state, actor, damage, "The fire", sounds);
         }
       }
       effect.fireTurns -= 1;
@@ -913,7 +978,7 @@ function runEnemyTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
       continue;
     }
 
-    if (enemy.enemyType === "bonegunner" && distance(enemy, target) <= 2) {
+    if (enemy.enemyType === "bonegunner" && !isWet(state, enemy) && distance(enemy, target) <= 2) {
       const retreat = bestStepAway(state, enemy, target);
       if (retreat) {
         tryMoveActor(state, enemy, retreat.x, retreat.y);
@@ -931,7 +996,7 @@ function runEnemyTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
       continue;
     }
 
-    if (enemy.enemyType === "bonegunner" && distance(enemy, target) <= 5 && hasLineOfSight(state, enemy, target)) {
+    if (enemy.enemyType === "bonegunner" && !isWet(state, enemy) && distance(enemy, target) <= 5 && hasLineOfSight(state, enemy, target)) {
       sounds.push(makeSound("gunfire", enemy));
       addMuzzleSmoke(state, enemy);
       if (rng.chance(0.65)) damageActor(state, target, 2, enemy.name, sounds);
@@ -989,6 +1054,8 @@ function finishTurn(state: GameState, sounds: SoundEvent[] = []): void {
   const rng = new Rng(state.rngState);
   state.turn += 1;
   state.threat = Math.max(0, state.threat - 1);
+  advanceWeather(state);
+  applyRain(state);
   expireEnemyAwareness(state);
   resolveSounds(state, sounds);
   runCrewTurns(state, rng, sounds);
@@ -1090,6 +1157,10 @@ export function reloadFlintlock(state: GameState): boolean {
     addMessage(state, "The flintlock is already loaded. Overachieving here would be unwise.");
     return false;
   }
+  if (isWet(state, captain(state))) {
+    addMessage(state, "The captain's powder and hands are too wet to reload safely.");
+    return false;
+  }
   if (state.inventory.ammo <= 0) {
     addMessage(state, "You possess no powder or shot, only confidence.");
     return false;
@@ -1173,6 +1244,10 @@ export function cycleTarget(state: GameState): Actor | null {
 export function fireFlintlock(state: GameState): boolean {
   if (state.phase !== "playing") return false;
   const player = captain(state);
+  if (isWet(state, player)) {
+    addMessage(state, "The flintlock is too damp to fire. Find shelter and let the powder dry.");
+    return false;
+  }
   let target = state.actors.find(
     (actor) =>
       actor.id === state.targetId &&
@@ -1221,6 +1296,10 @@ export function fireFlintlock(state: GameState): boolean {
 export function firePitchShot(state: GameState): boolean {
   if (state.phase !== "playing") return false;
   const player = captain(state);
+  if (isWet(state, player)) {
+    addMessage(state, "Wet powder refuses to launch even an exceptionally flammable idea.");
+    return false;
+  }
   if (!state.recoveredParts.pitch) {
     addMessage(state, "You need the pitch barrel before attempting incendiary ammunition.");
     return false;
@@ -1255,8 +1334,12 @@ export function firePitchShot(state: GameState): boolean {
   addMuzzleSmoke(state, player);
   damageActor(state, target, 2, `${player.name}'s pitch shot`, sounds);
   const smokeTurns = FIRE_SMOKE_TURNS + (state.currentLevel === "cave" ? 1 : 0);
-  addEnvironment(state, state.currentLevel, target, FIRE_TURNS, smokeTurns);
-  addMessage(state, `${target.name}'s position catches fire.`);
+  if (state.currentLevel !== "surface" || state.surfaceWeather.phase !== "rain") {
+    addEnvironment(state, state.currentLevel, target, FIRE_TURNS, smokeTurns);
+    addMessage(state, `${target.name}'s position catches fire.`);
+  } else {
+    addMessage(state, "The heavy rain smothers the pitch before it can spread.");
+  }
   finishTurn(state, sounds);
   return true;
 }
@@ -1332,6 +1415,33 @@ function isAtWreck(state: GameState): boolean {
   return state.currentLevel === "surface" && player.x === state.wreck.x && player.y === state.wreck.y;
 }
 
+function isAtSurf(state: GameState): boolean {
+  if (state.currentLevel !== "surface") return false;
+  const player = captain(state);
+  const map = currentMap(state);
+  if (map.tiles[tileIndex(player.x, player.y, map.width)]?.terrain !== "sand") return false;
+  return [[-1, 0], [1, 0], [0, -1], [0, 1]].some(([dx, dy]) => {
+    if (dx === undefined || dy === undefined) return false;
+    return map.tiles[tileIndex(player.x + dx, player.y + dy, map.width)]?.terrain === "water";
+  });
+}
+
+function douseParty(state: GameState): void {
+  const player = captain(state);
+  for (const actor of state.actors) {
+    if (
+      actor.alive &&
+      actor.level === state.currentLevel &&
+      (actor.kind === "captain" || actor.kind === "crew") &&
+      distance(player, actor) <= 1
+    ) {
+      actor.wetUntilTurn = Math.max(actor.wetUntilTurn, state.turn + SURF_WET_TURNS + 1);
+    }
+  }
+  addMessage(state, "The party douses itself in the surf. Fire seems less concerning; powder seems more so.");
+  finishTurn(state);
+}
+
 function inspectWreck(state: GameState): void {
   const tally = REPAIR_SEQUENCE.map((part) => {
     if (state.repairs[part]) return `${REPAIR_LABELS[part]} installed`;
@@ -1352,6 +1462,7 @@ export function getInteractionLabel(state: GameState): string {
     const part = nextRecoveredRepair(state);
     return part ? `Fit ${REPAIR_LABELS[part]}` : "Inspect wreck";
   }
+  if (isAtSurf(state)) return "Douse in surf";
   return "Inspect map";
 }
 
@@ -1361,6 +1472,10 @@ export function interact(state: GameState): boolean {
   const map = currentMap(state);
   const terrain = map.tiles[tileIndex(player.x, player.y, map.width)]?.terrain;
   if (terrain === "stairsDown" || terrain === "stairsUp") return useStairs(state);
+  if (isAtSurf(state)) {
+    douseParty(state);
+    return true;
+  }
   if (!isAtWreck(state)) {
     addMessage(state, "There is nothing here requiring the captain's personal attention.");
     return false;
