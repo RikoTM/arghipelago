@@ -59,6 +59,11 @@ export interface EnemyAwareness {
   expiresAtTurn: number;
 }
 
+export interface CrewAssignment {
+  order: CrewOrder;
+  targetId: number | null;
+}
+
 export interface Actor extends Point {
   id: number;
   level: LevelId;
@@ -68,6 +73,7 @@ export interface Actor extends Point {
   enemyType?: EnemyType;
   enemyAttribute: EnemyAttribute | null;
   crewTrait: CrewTrait | null;
+  crewAssignment: CrewAssignment | null;
   crewReaction: CrewReaction;
   reactionCooldownUntilTurn: number;
   stabilized: boolean;
@@ -105,7 +111,7 @@ export interface SurfaceWeather {
 }
 
 export interface GameState {
-  version: 12;
+  version: 13;
   seed: string;
   rngState: number;
   levels: Record<LevelId, MapLevel>;
@@ -122,8 +128,7 @@ export interface GameState {
   threat: number;
   dangerLevel: number;
   surfaceWeather: SurfaceWeather;
-  crewOrder: CrewOrder;
-  crewTargetId: number | null;
+  lastCrewOrder: CrewOrder;
   inventory: Inventory;
   recoveredParts: Record<RepairPart, boolean>;
   repairs: Record<RepairPart, boolean>;

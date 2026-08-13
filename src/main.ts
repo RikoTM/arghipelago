@@ -44,7 +44,7 @@ import type {
 } from "./game/types";
 import { createRenderer, getMapCamera, moveInspectionCursor, worldPointFromClient } from "./render";
 
-const SAVE_KEY = "arghipelago.active-run.v12";
+const SAVE_KEY = "arghipelago.active-run.v13";
 
 function requireElement<T extends HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -153,7 +153,7 @@ function loadSave(): GameState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GameState>;
     if (
-      parsed.version !== 12 ||
+      parsed.version !== 13 ||
       !parsed.levels?.surface ||
       !parsed.levels.cave ||
       !parsed.environment?.surface ||
@@ -162,6 +162,8 @@ function loadSave(): GameState | null {
       !["fair", "squallWarning", "rain"].includes(parsed.surfaceWeather.phase) ||
       !Number.isInteger(parsed.surfaceWeather.transitionTurn) ||
       !Number.isInteger(parsed.surfaceWeather.cycle) ||
+      !parsed.lastCrewOrder ||
+      !["follow", "hold", "rally", "attack"].includes(parsed.lastCrewOrder) ||
       (["surface", "cave"] as const).some((level) => {
         const map = parsed.levels?.[level];
         const effects = parsed.environment?.[level];
@@ -202,6 +204,12 @@ function loadSave(): GameState | null {
           (actor.kind !== "enemy" && actor.enemyAttribute !== null) ||
           (actor.kind !== "crew" && actor.kind !== "castaway" && actor.crewTrait !== null) ||
           (actor.crewTrait !== null && !["smokeShy", "powderShy", "shipmate"].includes(actor.crewTrait)) ||
+          (actor.kind === "crew" && !actor.crewAssignment) ||
+          (actor.kind !== "crew" && actor.crewAssignment !== null) ||
+          (actor.crewAssignment != null &&
+            (!["follow", "hold", "rally", "attack"].includes(actor.crewAssignment.order) ||
+              actor.crewAssignment.order === "attack" && !Number.isInteger(actor.crewAssignment.targetId) ||
+              actor.crewAssignment.order !== "attack" && actor.crewAssignment.targetId !== null)) ||
           (actor.crewReaction !== null && actor.crewReaction !== "brace") ||
           !Number.isInteger(actor.reactionCooldownUntilTurn) ||
           typeof actor.stabilized !== "boolean" ||
@@ -354,10 +362,17 @@ function renderInterface(): void {
   ].join("");
   const activeLevel = state.currentLevel;
   const crew = state.actors.filter((actor) => actor.alive && actor.level === activeLevel && actor.kind === "crew");
-  const crewTarget = state.actors.find((actor) => actor.alive && actor.id === state?.crewTargetId);
-  crewOrder.textContent = state.crewOrder === "attack" && crewTarget
-    ? `Attack: ${crewTarget.name}`
-    : state.crewOrder[0]?.toUpperCase() + state.crewOrder.slice(1);
+  const assignmentLabel = (member: typeof crew[number]): string => {
+    const assignment = member.crewAssignment ?? { order: "follow" as const, targetId: null };
+    const target = assignment.order === "attack"
+      ? state?.actors.find((actor) => actor.alive && actor.id === assignment.targetId)
+      : null;
+    return assignment.order === "attack"
+      ? `Attack: ${target?.name ?? "target lost"}`
+      : assignment.order[0]?.toUpperCase() + assignment.order.slice(1);
+  };
+  const activeOrders = new Set(crew.map(assignmentLabel));
+  crewOrder.textContent = activeOrders.size > 1 ? "Mixed orders" : activeOrders.values().next().value ?? "Follow";
   crewList.innerHTML = crew.length
     ? crew
         .map(
@@ -367,7 +382,7 @@ function renderInterface(): void {
               : `${member.hp}/${member.maxHp} vigor${isWet(state as GameState, member) ? " / Wet" : ""}`;
             const trait = member.crewTrait ? CREW_TRAIT_DETAILS[member.crewTrait].split(":")[0] : "Unremarkable";
             const reaction = member.crewReaction === "brace" ? " / Bracing" : "";
-            return `<div class="crew-row ${isIncapacitated(member) ? "incapacitated" : ""}"><strong>${escapeHtml(member.name)}</strong><span>${escapeHtml(member.role ?? "Pirate")} / ${trait}</span><span>${status}${reaction}</span></div>`;
+            return `<div class="crew-row ${isIncapacitated(member) ? "incapacitated" : ""}"><strong>${escapeHtml(member.name)}</strong><span>${escapeHtml(member.role ?? "Pirate")} / ${trait}</span><span>${status}${reaction} / ${escapeHtml(assignmentLabel(member))}</span></div>`;
           },
         )
         .join("")

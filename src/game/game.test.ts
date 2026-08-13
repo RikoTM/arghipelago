@@ -137,7 +137,7 @@ describe("game simulation", () => {
   it("round-trips the complete active run through JSON storage", () => {
     const state = createGame(captain, "save-round-trip");
     const restored = JSON.parse(JSON.stringify(state)) as typeof state;
-    expect(restored.version).toBe(12);
+    expect(restored.version).toBe(13);
     expect(restored.environment).toEqual({ surface: [], cave: [] });
     expect(restored.surfaceWeather.phase).toBe("fair");
     expect(restored).toEqual(state);
@@ -1247,8 +1247,8 @@ describe("game simulation", () => {
 
     expect(commandCrewAttack(state)).toBe(true);
     expect(state.turn).toBe(1);
-    expect(state.crewOrder).toBe("attack");
-    expect(state.crewTargetId).toBe(target.id);
+    expect(state.lastCrewOrder).toBe("attack");
+    expect(crew.crewAssignment).toEqual({ order: "attack", targetId: target.id });
     expect(Math.max(Math.abs(crew.x - target.x), Math.abs(crew.y - target.y))).toBe(5);
   });
 
@@ -1285,8 +1285,7 @@ describe("game simulation", () => {
 
     expect(commandCrewAttack(state)).toBe(true);
     expect(target.alive).toBe(false);
-    expect(state.crewOrder).toBe("follow");
-    expect(state.crewTargetId).toBeNull();
+    expect(crew.crewAssignment).toEqual({ order: "follow", targetId: null });
   });
 
   it("does not spend a turn on an attack order without crew or a selected target", () => {
@@ -1313,11 +1312,16 @@ describe("game simulation", () => {
     if (!crew) return;
     crew.kind = "crew";
     crew.level = "surface";
-    state.crewOrder = "attack";
-    state.crewTargetId = state.actors.find((actor) => actor.kind === "enemy")?.id ?? null;
+    crew.x = state.wreck.x + 1;
+    crew.y = state.wreck.y;
+    state.lastCrewOrder = "attack";
+    crew.crewAssignment = {
+      order: "attack",
+      targetId: state.actors.find((actor) => actor.kind === "enemy")?.id ?? null,
+    };
 
     expect(cycleCrewOrder(state)).toBe("follow");
-    expect(state.crewTargetId).toBeNull();
+    expect(crew.crewAssignment).toEqual({ order: "follow", targetId: null });
   });
 
   it("has powder-shy crew brace after audible hostile gunfire without repeated lockout", () => {
@@ -1362,11 +1366,92 @@ describe("game simulation", () => {
     if (!crew) return;
     state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
     crew.kind = "crew";
+    crew.x = state.wreck.x + 1;
+    crew.y = state.wreck.y;
     crew.crewReaction = "brace";
-    state.crewOrder = "hold";
+    crew.crewAssignment = { order: "hold", targetId: null };
+    state.lastCrewOrder = "hold";
 
     expect(cycleCrewOrder(state)).toBe("rally");
     expect(crew.crewReaction).toBeNull();
+  });
+
+  it("delivers orders only to active crew reached through terrain and rain", () => {
+    const state = createGame(captain, "spatial-crew-orders");
+    const player = getCaptain(state);
+    const crew = state.actors.filter((actor) => actor.kind === "castaway");
+    const audible = crew[0];
+    const rainMuffled = crew[1];
+    const terrainMuffled = crew[2];
+    expect(audible).toBeDefined();
+    expect(rainMuffled).toBeDefined();
+    expect(terrainMuffled).toBeDefined();
+    if (!audible || !rainMuffled || !terrainMuffled) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "caveWall";
+    player.x = 20;
+    player.y = 20;
+    audible.kind = "crew";
+    audible.x = 20;
+    audible.y = 24;
+    rainMuffled.kind = "crew";
+    rainMuffled.x = 20;
+    rainMuffled.y = 25;
+    terrainMuffled.kind = "crew";
+    terrainMuffled.x = 24;
+    terrainMuffled.y = 20;
+    for (const member of crew) member.crewAssignment = { order: "follow", targetId: null };
+    for (let y = 20; y <= 25; y += 1) {
+      const tile = state.levels.surface.tiles[tileIndex(20, y, state.levels.surface.width)];
+      if (tile) tile.terrain = "grass";
+    }
+    for (let x = 21; x <= 23; x += 1) {
+      const tile = state.levels.surface.tiles[tileIndex(x, 20, state.levels.surface.width)];
+      if (tile) tile.terrain = "jungle";
+    }
+    const terrainDestination = state.levels.surface.tiles[tileIndex(24, 20, state.levels.surface.width)];
+    if (terrainDestination) terrainDestination.terrain = "grass";
+    state.surfaceWeather = { phase: "rain", transitionTurn: 100, cycle: 0 };
+
+    expect(cycleCrewOrder(state)).toBe("hold");
+
+    expect(audible.crewAssignment).toEqual({ order: "hold", targetId: null });
+    expect(rainMuffled.crewAssignment).toEqual({ order: "follow", targetId: null });
+    expect(terrainMuffled.crewAssignment).toEqual({ order: "follow", targetId: null });
+    expect(state.messages.at(-1)).toContain("1 of 3 crewmates hear it");
+  });
+
+  it("lets only Rally recipients shake off a pending reaction", () => {
+    const state = createGame(captain, "selective-rally");
+    const player = getCaptain(state);
+    const crew = state.actors.filter((actor) => actor.kind === "castaway").slice(0, 2);
+    const nearby = crew[0];
+    const distant = crew[1];
+    expect(nearby).toBeDefined();
+    expect(distant).toBeDefined();
+    if (!nearby || !distant) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    nearby.kind = "crew";
+    nearby.x = 21;
+    nearby.y = 20;
+    distant.kind = "crew";
+    distant.x = 28;
+    distant.y = 20;
+    for (const member of crew) {
+      member.crewAssignment = { order: "hold", targetId: null };
+      member.crewReaction = "brace";
+    }
+    state.lastCrewOrder = "hold";
+
+    expect(cycleCrewOrder(state)).toBe("rally");
+
+    expect(nearby.crewAssignment).toEqual({ order: "rally", targetId: null });
+    expect(nearby.reactionCooldownUntilTurn).toBe(0);
+    expect(distant.crewAssignment).toEqual({ order: "hold", targetId: null });
+    expect(distant.reactionCooldownUntilTurn).toBeGreaterThan(state.turn);
   });
 
   it("has smoke-shy crew withdraw from hazards unless wet", () => {
