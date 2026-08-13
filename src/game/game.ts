@@ -34,6 +34,7 @@ const PURSUIT_MEMORY = 10;
 const FIRE_TURNS = 3;
 const FIRE_SMOKE_TURNS = 5;
 const FIRE_DAMAGE = 2;
+const MUZZLE_SMOKE_TURNS = 3;
 
 type SoundKind = "gunfire" | "slagBurst" | "command" | "distraction" | "fireSpread";
 
@@ -514,6 +515,10 @@ function makeEnvironmentalSound(kind: SoundKind, level: LevelId, origin: Point):
   return { kind, sourceActorId: null, level, origin: { ...origin }, radius: SOUND_RADIUS[kind] };
 }
 
+function addMuzzleSmoke(state: GameState, shooter: Actor): void {
+  addEnvironment(state, shooter.level, shooter, 0, MUZZLE_SMOKE_TURNS + (shooter.level === "cave" ? 1 : 0));
+}
+
 function livingActorAtLevel(state: GameState, level: LevelId, point: Point): Actor | undefined {
   return state.actors.find(
     (actor) => actor.alive && actor.level === level && actor.x === point.x && actor.y === point.y,
@@ -928,6 +933,7 @@ function runEnemyTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
 
     if (enemy.enemyType === "bonegunner" && distance(enemy, target) <= 5 && hasLineOfSight(state, enemy, target)) {
       sounds.push(makeSound("gunfire", enemy));
+      addMuzzleSmoke(state, enemy);
       if (rng.chance(0.65)) damageActor(state, target, 2, enemy.name, sounds);
       else addMessage(state, `${enemy.name} fires. A nearby tree is gravely inconvenienced.`);
       if (state.phase !== "playing") return;
@@ -1196,6 +1202,7 @@ export function fireFlintlock(state: GameState): boolean {
 
   const rng = new Rng(state.rngState);
   const sounds = [makeSound("gunfire", player)];
+  addMuzzleSmoke(state, player);
   state.inventory.loaded = false;
   const accuracy = state.captainConfig.knack === "deadeye" ? 0.95 : state.captainConfig.knack === "lucky" ? 0.85 : 0.78;
   if (rng.chance(accuracy)) {
@@ -1207,6 +1214,49 @@ export function fireFlintlock(state: GameState): boolean {
     addMessage(state, `${player.name} fires and decisively defeats some foliage.`);
   }
   state.rngState = rng.state;
+  finishTurn(state, sounds);
+  return true;
+}
+
+export function firePitchShot(state: GameState): boolean {
+  if (state.phase !== "playing") return false;
+  const player = captain(state);
+  if (!state.recoveredParts.pitch) {
+    addMessage(state, "You need the pitch barrel before attempting incendiary ammunition.");
+    return false;
+  }
+  const target = state.actors.find(
+    (actor) =>
+      actor.id === state.targetId &&
+      actor.alive &&
+      actor.level === state.currentLevel &&
+      actor.kind === "enemy" &&
+      !isEnemyConcealed(actor),
+  );
+  if (!target || distance(player, target) > 6 || !canSeeActor(state, player, target)) {
+    addMessage(state, "No clear target is close enough for a pitch-soaked shot.");
+    return false;
+  }
+  if (!state.inventory.loaded) {
+    addMessage(state, "The flintlock must be loaded before adding inadvisable amounts of pitch.");
+    return false;
+  }
+  const interveningCrew = state.actors.find((actor) => {
+    if (!canAct(actor) || actor.level !== state.currentLevel || actor.kind !== "crew") return false;
+    return lineBetween(player, target).slice(1, -1).some((point) => point.x === actor.x && point.y === actor.y);
+  });
+  if (interveningCrew) {
+    addMessage(state, `${interveningCrew.name} objects strongly to being between the captain and a burning projectile.`);
+    return false;
+  }
+
+  const sounds = [makeSound("gunfire", player)];
+  state.inventory.loaded = false;
+  addMuzzleSmoke(state, player);
+  damageActor(state, target, 2, `${player.name}'s pitch shot`, sounds);
+  const smokeTurns = FIRE_SMOKE_TURNS + (state.currentLevel === "cave" ? 1 : 0);
+  addEnvironment(state, state.currentLevel, target, FIRE_TURNS, smokeTurns);
+  addMessage(state, `${target.name}'s position catches fire.`);
   finishTurn(state, sounds);
   return true;
 }

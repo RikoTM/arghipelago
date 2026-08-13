@@ -5,6 +5,7 @@ import {
   cycleCrewOrder,
   fireFlintlock,
   environmentAt,
+  firePitchShot,
   getCaptain,
   getInteractionLabel,
   getRunSummary,
@@ -923,7 +924,56 @@ describe("game simulation", () => {
     expect(fireFlintlock(state)).toBe(true);
     expect(state.inventory.loaded).toBe(false);
     expect(state.threat).toBeGreaterThan(6);
+    expect(environmentAt(state, "surface", player)).toMatchObject({ fireTurns: 0, smokeTurns: 2 });
     expect(fireFlintlock(state)).toBe(false);
+  });
+
+  it("rejects pitch shots without recovered pitch or a valid shot", () => {
+    const state = createGame(captain, "invalid-pitch-shot");
+    const loaded = state.inventory.loaded;
+
+    expect(firePitchShot(state)).toBe(false);
+    expect(state.turn).toBe(0);
+    expect(state.inventory.loaded).toBe(loaded);
+
+    state.recoveredParts.pitch = true;
+    expect(firePitchShot(state)).toBe(false);
+    expect(state.turn).toBe(0);
+    expect(state.inventory.loaded).toBe(loaded);
+  });
+
+  it("uses recovered pitch for a guaranteed incendiary shot without consuming the repair", () => {
+    const state = createGame(captain, "incendiary-shot");
+    const player = getCaptain(state);
+    const target = state.actors.find(
+      (actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType !== "crab",
+    );
+    expect(target).toBeDefined();
+    if (!target) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== target.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    target.x = 24;
+    target.y = 20;
+    target.hp = 20;
+    target.maxHp = 20;
+    target.enemyAwareness = null;
+    state.recoveredParts.pitch = true;
+    state.targetId = target.id;
+    updateVisibility(state);
+
+    expect(firePitchShot(state)).toBe(true);
+
+    expect(target.hp).toBe(18);
+    expect(state.recoveredParts.pitch).toBe(true);
+    expect(state.inventory.loaded).toBe(false);
+    expect(state.turn).toBe(1);
+    expect(environmentAt(state, "surface", { x: 24, y: 20 })).toMatchObject({ fireTurns: 2, smokeTurns: 4 });
+    expect(environmentAt(state, "surface", player)).toMatchObject({ fireTurns: 0, smokeTurns: 2 });
+    expect(target.enemyAwareness).not.toBeNull();
   });
 
   it("orders crew to pursue the selected visible enemy", () => {

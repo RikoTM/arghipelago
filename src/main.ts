@@ -9,6 +9,7 @@ import {
   cycleCrewOrder,
   cycleTarget,
   fireFlintlock,
+  firePitchShot,
   getCaptain,
   getCurrentMap,
   getInteractionLabel,
@@ -73,6 +74,7 @@ const retryRunButton = requireElement<HTMLButtonElement>("#retry-run-button");
 const newCaptainButton = requireElement<HTMLButtonElement>("#new-captain-button");
 const fireButton = requireElement<HTMLButtonElement>("#fire-button");
 const crewAttackButton = requireElement<HTMLButtonElement>("#crew-attack-button");
+const pitchShotButton = requireElement<HTMLButtonElement>("#pitch-shot-button");
 const contextButton = requireElement<HTMLButtonElement>("#context-button");
 const controlsHelp = requireElement<HTMLDetailsElement>(".controls-help");
 const inspectionReadout = requireElement<HTMLElement>("#inspection-readout");
@@ -343,6 +345,8 @@ function renderInterface(): void {
   const target = state.actors.find((actor) => actor.alive && actor.id === state?.targetId);
   fireButton.textContent = target ? `Fire at ${target.name}` : "Aim flintlock";
   crewAttackButton.textContent = target ? `Attack ${target.name}` : "Attack target";
+  pitchShotButton.textContent = state.recoveredParts.pitch && target ? `Burn ${target.name}` : "Pitch shot";
+  pitchShotButton.disabled = !state.recoveredParts.pitch;
   const onStairs =
     (state.currentLevel === "surface" && player.x === state.caveEntrance.x && player.y === state.caveEntrance.y) ||
     (state.currentLevel === "cave" && player.x === state.caveExit.x && player.y === state.caveExit.y);
@@ -350,7 +354,9 @@ function renderInterface(): void {
   contextButton.textContent = activeInspection?.mode === "locked" ? "Done inspecting" : getInteractionLabel(state);
   contextButton.classList.toggle("context-ready", onStairs || onWreck);
   for (const button of touchActionButtons) {
-    button.disabled = activeInspection?.mode === "locked" && button !== contextButton;
+    button.disabled =
+      activeInspection?.mode === "locked" && button !== contextButton ||
+      button === pitchShotButton && !state.recoveredParts.pitch;
   }
   renderInspection();
   phaseBanner.hidden = state.phase === "playing";
@@ -419,7 +425,8 @@ function handleAction(action: string): void {
       cycleTarget(state);
       renderInterface();
     } else commitAction(() => fireFlintlock(state as GameState));
-  } else if (action === "order") commitAction(() => cycleCrewOrder(state as GameState));
+  } else if (action === "pitch-shot") commitAction(() => firePitchShot(state as GameState));
+  else if (action === "order") commitAction(() => cycleCrewOrder(state as GameState));
   else if (action === "crew-attack") commitAction(() => commandCrewAttack(state as GameState));
   else if (action === "interact") commitAction(() => interact(state as GameState));
 }
@@ -538,6 +545,7 @@ document.addEventListener("keydown", (event) => {
   } else if (event.key.toLowerCase() === "r") handleAction("reload");
   else if (event.key.toLowerCase() === "s") handleAction("salts");
   else if (event.key.toLowerCase() === "d") handleAction("distract");
+  else if (event.key.toLowerCase() === "p") handleAction("pitch-shot");
   else if (event.key.toLowerCase() === "x") setInspection(getCaptain(state), "locked");
   else if (event.key === ">" || event.key === "<") commitAction(() => useStairs(state as GameState));
   else if (event.key.toLowerCase() === "e") handleAction("interact");
