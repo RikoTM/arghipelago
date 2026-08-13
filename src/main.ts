@@ -12,6 +12,7 @@ import {
   firePitchShot,
   getCaptain,
   getCurrentMap,
+  getFaction,
   getInteractionLabel,
   getRunSummary,
   inspectMapPoint,
@@ -41,7 +42,7 @@ import type {
 } from "./game/types";
 import { createRenderer, getMapCamera, moveInspectionCursor, worldPointFromClient } from "./render";
 
-const SAVE_KEY = "arghipelago.active-run.v10";
+const SAVE_KEY = "arghipelago.active-run.v11";
 
 function requireElement<T extends HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -143,7 +144,7 @@ function loadSave(): GameState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GameState>;
     if (
-      parsed.version !== 10 ||
+      parsed.version !== 11 ||
       !parsed.levels?.surface ||
       !parsed.levels.cave ||
       !parsed.environment?.surface ||
@@ -194,6 +195,8 @@ function loadSave(): GameState | null {
             !["keenEared", "ironclad", "skirmishing", "riposting"].includes(actor.enemyAttribute)) ||
           (actor.enemyAwareness !== null &&
             (actor.enemyAwareness.mode !== "investigating" && actor.enemyAwareness.mode !== "pursuing" ||
+              actor.enemyAwareness.targetId !== null && !Number.isInteger(actor.enemyAwareness.targetId) ||
+              actor.enemyAwareness.mode === "pursuing" && actor.enemyAwareness.targetId === null ||
               !Number.isInteger(actor.enemyAwareness.lastKnownPosition.x) ||
               !Number.isInteger(actor.enemyAwareness.lastKnownPosition.y) ||
               !Number.isInteger(actor.enemyAwareness.expiresAtTurn))),
@@ -249,11 +252,17 @@ function inspectionDescription(result: MapInspection): string {
     } else {
       const tactic = actor.enemyType ? ENEMY_TACTICS[actor.enemyType] : "hostile";
       const awareness = actor.enemyAwareness;
+      const awarenessTarget = awareness?.targetId === null
+        ? null
+        : result.actors.find((candidate) => candidate.id === awareness?.targetId);
+      const targetLabel = awarenessTarget
+        ? awarenessTarget.name
+        : awareness?.targetId === null ? "a sound" : "a rival";
       const behavior = awareness
-        ? `${awareness.mode} ${awareness.lastKnownPosition.x},${awareness.lastKnownPosition.y} until turn ${awareness.expiresAtTurn}`
+        ? `${awareness.mode} ${targetLabel} at ${awareness.lastKnownPosition.x},${awareness.lastKnownPosition.y} until turn ${awareness.expiresAtTurn}`
         : "unaware";
       const attribute = actor.enemyAttribute ? `, ${ENEMY_ATTRIBUTE_DETAILS[actor.enemyAttribute]}` : "";
-      details.push(`${actor.name}, ${behavior}, ${actor.hp}/${actor.maxHp} vigor, ${tactic}${attribute}`);
+      details.push(`${actor.name}, ${getFaction(actor)}, ${behavior}, ${actor.hp}/${actor.maxHp} vigor, ${tactic}${attribute}`);
     }
     if (isWet(state as GameState, actor)) details.push(`${actor.name} is wet; firearms and fire behave differently`);
   }

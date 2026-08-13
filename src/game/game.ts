@@ -6,6 +6,7 @@ import type {
   EnemyAttribute,
   EnemyType,
   EnvironmentalTile,
+  Faction,
   GameState,
   LevelId,
   MapLevel,
@@ -47,6 +48,11 @@ interface SoundEvent {
   level: LevelId;
   origin: Point;
   radius: number;
+}
+
+interface DamageSource {
+  actor: Actor | null;
+  label: string;
 }
 
 const SOUND_RADIUS: Record<SoundKind, number> = {
@@ -132,6 +138,20 @@ export function isEnemyConcealed(actor: Actor): boolean {
 
 export function isIncapacitated(actor: Actor): boolean {
   return actor.alive && actor.kind === "crew" && actor.incapacitatedTurns > 0;
+}
+
+export function getFaction(actor: Actor): Faction {
+  if (actor.kind === "captain" || actor.kind === "crew") return "party";
+  if (actor.kind !== "enemy") return "neutral";
+  if (actor.enemyType === "crab") return "shoreBrood";
+  if (actor.enemyType === "slag") return "cinderkin";
+  return "boneCrew";
+}
+
+export function areActorsHostile(first: Actor, second: Actor): boolean {
+  const firstFaction = getFaction(first);
+  const secondFaction = getFaction(second);
+  return firstFaction !== "neutral" && secondFaction !== "neutral" && firstFaction !== secondFaction;
 }
 
 export function isWet(state: GameState, actor: Actor): boolean {
@@ -476,7 +496,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
   assignInitialSpecials(seed, actors, island.wreck, cave.exit);
 
   const state: GameState = {
-    version: 10,
+    version: 11,
     seed,
     rngState: rng.state,
     levels: {
@@ -609,12 +629,15 @@ function damageActor(
   state: GameState,
   target: Actor,
   amount: number,
-  sourceName: string,
+  source: DamageSource,
   sounds: SoundEvent[],
 ): void {
   if (!target.alive || isIncapacitated(target)) return;
   target.hp -= amount;
-  addMessage(state, `${sourceName} hits ${target.name} for ${amount}.`);
+  addMessage(state, `${source.label} hits ${target.name} for ${amount}.`);
+  if (target.kind === "enemy" && target.hp > 0 && source.actor && areActorsHostile(target, source.actor)) {
+    rememberTarget(state, target, source.actor);
+  }
   if (target.hp > 0) return;
 
   target.alive = false;
@@ -644,7 +667,7 @@ function damageActor(
       for (const actor of state.actors) {
         if (canAct(actor) && actor.level === target.level && distance(actor, target) <= 1) {
           const damage = Math.max(0, burstDamage - (isWet(state, actor) ? 1 : 0));
-          if (damage > 0) damageActor(state, actor, damage, `${target.name}'s fiery collapse`, sounds);
+          if (damage > 0) damageActor(state, actor, damage, { actor: target, label: `${target.name}'s fiery collapse` }, sounds);
         }
       }
     }
@@ -657,7 +680,7 @@ function meleeAttack(state: GameState, attacker: Actor, target: Actor, rng: Rng,
   const luckyBonus = attacker.kind === "captain" && state.captainConfig.knack === "lucky" && rng.chance(0.25) ? 1 : 0;
   const damage = base + duelistBonus + luckyBonus;
   if (luckyBonus > 0) addMessage(state, "A fortunate wobble improves the captain's attack.");
-  damageActor(state, target, damage, attacker.name, sounds);
+  damageActor(state, target, damage, { actor: attacker, label: attacker.name }, sounds);
   if (
     target.alive &&
     target.kind === "enemy" &&
@@ -665,7 +688,7 @@ function meleeAttack(state: GameState, attacker: Actor, target: Actor, rng: Rng,
     canAct(attacker) &&
     distance(attacker, target) <= 1
   ) {
-    damageActor(state, attacker, 1, `${target.name}'s riposte`, sounds);
+    damageActor(state, attacker, 1, { actor: target, label: `${target.name}'s riposte` }, sounds);
   }
 }
 
@@ -817,23 +840,29 @@ function runCrewTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
   }
 }
 
-function seenPartyTarget(state: GameState, enemy: Actor): Actor | null {
-  const detectionRange = enemy.enemyType === "bonegunner" ? 7 : enemy.enemyType === "crab" ? 2 : 5;
-  return state.actors
-    .filter(
-      (actor) =>
-        canAct(actor) &&
-        actor.level === enemy.level &&
-        (actor.kind === "captain" || actor.kind === "crew") &&
-        distance(enemy, actor) <= detectionRange &&
-        canSeeActor(state, enemy, actor),
-    )
-    .sort((a, b) => distance(enemy, a) - distance(enemy, b) || a.id - b.id)[0] ?? null;
+function canEnemyAcquire(enemy: Actor, target: Actor): boolean {
+  if (!canAct(target) || target.level !== enemy.level || !areActorsHostile(enemy, target)) return false;
+  if (target.kind === "enemy" && isEnemyConcealed(target)) return false;
+  if (target.kind === "enemy" && enemy.enemyAwareness === null && target.enemyAwareness === null) return false;
+  return true;
 }
 
-function rememberParty(state: GameState, enemy: Actor, target: Actor): void {
+function seenHostileTarget(state: GameState, enemy: Actor): Actor | null {
+  const detectionRange = enemy.enemyType === "bonegunner" ? 7 : enemy.enemyType === "crab" ? 2 : 5;
+  const candidates = state.actors.filter(
+    (actor) =>
+      canEnemyAcquire(enemy, actor) &&
+      distance(enemy, actor) <= detectionRange &&
+      canSeeActor(state, enemy, actor),
+  );
+  const remembered = candidates.find((actor) => actor.id === enemy.enemyAwareness?.targetId);
+  return remembered ?? candidates.sort((a, b) => distance(enemy, a) - distance(enemy, b) || a.id - b.id)[0] ?? null;
+}
+
+function rememberTarget(state: GameState, enemy: Actor, target: Actor): void {
   enemy.enemyAwareness = {
     mode: "pursuing",
+    targetId: target.id,
     lastKnownPosition: { x: target.x, y: target.y },
     expiresAtTurn: state.turn + PURSUIT_MEMORY,
   };
@@ -884,11 +913,17 @@ function resolveSounds(state: GameState, sounds: SoundEvent[]): void {
         enemy.level !== sound.level ||
         !soundReaches(state, sound, enemy)
       ) continue;
-      const seen = enemy.level === state.currentLevel ? seenPartyTarget(state, enemy) : null;
-      if (seen) rememberParty(state, enemy, seen);
+      const seen = enemy.level === state.currentLevel ? seenHostileTarget(state, enemy) : null;
+      if (seen) rememberTarget(state, enemy, seen);
       else {
+        const source = sound.sourceActorId === null
+          ? null
+          : state.actors.find((actor) => actor.id === sound.sourceActorId) ?? null;
+        const hostileSource = source && areActorsHostile(enemy, source) ? source : null;
+        if (enemy.enemyAwareness?.mode === "pursuing" && !hostileSource) continue;
         enemy.enemyAwareness = {
           mode: "investigating",
+          targetId: hostileSource?.id ?? null,
           lastKnownPosition: { ...sound.origin },
           expiresAtTurn: state.turn + INVESTIGATION_MEMORY,
         };
@@ -936,7 +971,7 @@ function resolveEnvironment(state: GameState, sounds: SoundEvent[]): void {
           actor.y === effect.y
         ) {
           const damage = isWet(state, actor) ? FIRE_DAMAGE - 1 : FIRE_DAMAGE;
-          if (damage > 0) damageActor(state, actor, damage, "The fire", sounds);
+          if (damage > 0) damageActor(state, actor, damage, { actor: null, label: "The fire" }, sounds);
         }
       }
       effect.fireTurns -= 1;
@@ -961,8 +996,8 @@ function runEnemyTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
   for (const enemy of state.actors.filter(
     (actor) => actor.alive && actor.level === state.currentLevel && actor.kind === "enemy",
   )) {
-    const target = seenPartyTarget(state, enemy);
-    if (target) rememberParty(state, enemy, target);
+    const target = seenHostileTarget(state, enemy);
+    if (target) rememberTarget(state, enemy, target);
     const awareness = enemy.enemyAwareness;
     if (!awareness) continue;
 
@@ -999,7 +1034,7 @@ function runEnemyTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
     if (enemy.enemyType === "bonegunner" && !isWet(state, enemy) && distance(enemy, target) <= 5 && hasLineOfSight(state, enemy, target)) {
       sounds.push(makeSound("gunfire", enemy));
       addMuzzleSmoke(state, enemy);
-      if (rng.chance(0.65)) damageActor(state, target, 2, enemy.name, sounds);
+      if (rng.chance(0.65)) damageActor(state, target, 2, { actor: enemy, label: enemy.name }, sounds);
       else addMessage(state, `${enemy.name} fires. A nearby tree is gravely inconvenienced.`);
       if (state.phase !== "playing") return;
       continue;
@@ -1102,7 +1137,7 @@ export function moveCaptain(state: GameState, dx: number, dy: number): boolean {
   if (occupant) {
     if (occupant.kind === "enemy") {
       if (isEnemyConcealed(occupant)) {
-        rememberParty(state, occupant, player);
+        rememberTarget(state, occupant, player);
         addMessage(state, `${occupant.name} erupts from the sand in a storm of claws.`);
         finishTurn(state);
         return true;
@@ -1284,7 +1319,7 @@ export function fireFlintlock(state: GameState): boolean {
     const rolledDamage = 5 + rng.int(3);
     const damage = target.enemyAttribute === "ironclad" ? Math.max(1, rolledDamage - 2) : rolledDamage;
     if (target.enemyAttribute === "ironclad") addMessage(state, `${target.name}'s iron plating absorbs part of the shot.`);
-    damageActor(state, target, damage, player.name, sounds);
+    damageActor(state, target, damage, { actor: player, label: player.name }, sounds);
   } else {
     addMessage(state, `${player.name} fires and decisively defeats some foliage.`);
   }
@@ -1332,7 +1367,7 @@ export function firePitchShot(state: GameState): boolean {
   const sounds = [makeSound("gunfire", player)];
   state.inventory.loaded = false;
   addMuzzleSmoke(state, player);
-  damageActor(state, target, 2, `${player.name}'s pitch shot`, sounds);
+  damageActor(state, target, 2, { actor: player, label: `${player.name}'s pitch shot` }, sounds);
   const smokeTurns = FIRE_SMOKE_TURNS + (state.currentLevel === "cave" ? 1 : 0);
   if (state.currentLevel !== "surface" || state.surfaceWeather.phase !== "rain") {
     addEnvironment(state, state.currentLevel, target, FIRE_TURNS, smokeTurns);

@@ -507,6 +507,21 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
         context.fill();
         context.stroke();
       }
+      const rivalTarget = actor.enemyAwareness?.targetId === null
+        ? null
+        : state.actors.find(
+            (candidate) =>
+              candidate.id === actor.enemyAwareness?.targetId &&
+              candidate.kind === "enemy" &&
+              candidate.alive &&
+              candidate.level === state.currentLevel,
+          );
+      if (rivalTarget) {
+        inkLine(context, [[screenX + 2, screenY + 3], [screenX + 10, screenY + 11]], 2, PAPER);
+        inkLine(context, [[screenX + 10, screenY + 3], [screenX + 2, screenY + 11]], 2, PAPER);
+        inkLine(context, [[screenX + 2, screenY + 3], [screenX + 10, screenY + 11]], 1, INK);
+        inkLine(context, [[screenX + 10, screenY + 3], [screenX + 2, screenY + 11]], 1, INK);
+      }
       if (isWet(state, actor)) {
         context.fillStyle = "#394d59";
         context.strokeStyle = PAPER;

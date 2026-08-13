@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  areActorsHostile,
   commandCrewAttack,
   createGame,
   cycleCrewOrder,
@@ -7,6 +8,7 @@ import {
   environmentAt,
   firePitchShot,
   getCaptain,
+  getFaction,
   getInteractionLabel,
   getRunSummary,
   inspectMapPoint,
@@ -22,7 +24,7 @@ import {
   visibleEnemies,
   waitTurn,
 } from "./game";
-import type { Actor, CaptainConfig, EnemyAttribute, Point } from "./types";
+import type { Actor, CaptainConfig, EnemyAttribute } from "./types";
 import { generateCave, generateIsland, isPassableTerrain, tileIndex } from "./world";
 
 const captain: CaptainConfig = {
@@ -32,9 +34,10 @@ const captain: CaptainConfig = {
   coat: "crimson",
 };
 
-function pursue(actor: Actor, target: Point, expiresAtTurn = 100): void {
+function pursue(actor: Actor, target: Actor, expiresAtTurn = 100): void {
   actor.enemyAwareness = {
     mode: "pursuing",
+    targetId: target.id,
     lastKnownPosition: { x: target.x, y: target.y },
     expiresAtTurn,
   };
@@ -119,7 +122,7 @@ describe("game simulation", () => {
   it("round-trips the complete active run through JSON storage", () => {
     const state = createGame(captain, "save-round-trip");
     const restored = JSON.parse(JSON.stringify(state)) as typeof state;
-    expect(restored.version).toBe(10);
+    expect(restored.version).toBe(11);
     expect(restored.environment).toEqual({ surface: [], cave: [] });
     expect(restored.surfaceWeather.phase).toBe("fair");
     expect(restored).toEqual(state);
@@ -512,6 +515,146 @@ describe("game simulation", () => {
     expect(surfaceEnemies.map((enemy) => ({ id: enemy.id, x: enemy.x, y: enemy.y }))).toEqual(initialPositions);
   });
 
+  it("derives symmetric rival factions while keeping castaways neutral", () => {
+    const state = createGame(captain, "ecology-factions");
+    const player = getCaptain(state);
+    const skeleton = state.actors.find((actor) => actor.enemyType === "skeleton");
+    const crab = state.actors.find((actor) => actor.enemyType === "crab");
+    const slag = state.actors.find((actor) => actor.enemyType === "slag");
+    const castaway = state.actors.find((actor) => actor.kind === "castaway");
+    expect(skeleton).toBeDefined();
+    expect(crab).toBeDefined();
+    expect(slag).toBeDefined();
+    expect(castaway).toBeDefined();
+    if (!skeleton || !crab || !slag || !castaway) return;
+
+    expect(getFaction(player)).toBe("party");
+    expect(getFaction(skeleton)).toBe("boneCrew");
+    expect(getFaction(crab)).toBe("shoreBrood");
+    expect(getFaction(slag)).toBe("cinderkin");
+    expect(getFaction(castaway)).toBe("neutral");
+    expect(areActorsHostile(skeleton, crab)).toBe(true);
+    expect(areActorsHostile(crab, skeleton)).toBe(true);
+    expect(areActorsHostile(skeleton, slag)).toBe(true);
+    expect(areActorsHostile(skeleton, castaway)).toBe(false);
+    expect(areActorsHostile(skeleton, player)).toBe(true);
+  });
+
+  it("keeps mutually unaware rival groups dormant", () => {
+    const state = createGame(captain, "dormant-ecology");
+    const skeleton = state.actors.find((actor) => actor.enemyType === "skeleton" && actor.level === "surface");
+    const slag = state.actors.find((actor) => actor.enemyType === "slag" && actor.level === "surface");
+    expect(skeleton).toBeDefined();
+    expect(slag).toBeDefined();
+    if (!skeleton || !slag) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== skeleton.id && actor.id !== slag.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    skeleton.x = 25;
+    skeleton.y = 20;
+    skeleton.enemyAwareness = null;
+    slag.x = 27;
+    slag.y = 20;
+    slag.enemyAwareness = null;
+    const positions = [{ x: skeleton.x, y: skeleton.y }, { x: slag.x, y: slag.y }];
+
+    waitTurn(state);
+
+    expect([{ x: skeleton.x, y: skeleton.y }, { x: slag.x, y: slag.y }]).toEqual(positions);
+    expect(skeleton.enemyAwareness).toBeNull();
+    expect(slag.enemyAwareness).toBeNull();
+  });
+
+  it("lets an activated rival provoke and sustain an enemy clash", () => {
+    const state = createGame(captain, "engineered-rival-clash");
+    const player = getCaptain(state);
+    const skeleton = state.actors.find((actor) => actor.enemyType === "skeleton" && actor.level === "surface");
+    const slag = state.actors.find((actor) => actor.enemyType === "slag" && actor.level === "surface");
+    expect(skeleton).toBeDefined();
+    expect(slag).toBeDefined();
+    if (!skeleton || !slag) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== skeleton.id && actor.id !== slag.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 10;
+    player.y = 10;
+    skeleton.x = 25;
+    skeleton.y = 20;
+    skeleton.enemyAwareness = {
+      mode: "investigating",
+      targetId: player.id,
+      lastKnownPosition: { x: 30, y: 20 },
+      expiresAtTurn: 100,
+    };
+    slag.x = 27;
+    slag.y = 20;
+    slag.enemyAwareness = null;
+    const skeletonHealth = skeleton.hp;
+
+    waitTurn(state);
+
+    expect(slag.enemyAwareness).toMatchObject({ mode: "pursuing", targetId: skeleton.id });
+    expect(skeleton.hp).toBeLessThan(skeletonHealth);
+    expect(skeleton.enemyAwareness).toMatchObject({ mode: "pursuing", targetId: slag.id });
+  });
+
+  it("uses smoke to break rival sight while preserving last-known pursuit", () => {
+    const state = createGame(captain, "rival-smoke-break");
+    const skeleton = state.actors.find((actor) => actor.enemyType === "skeleton" && actor.level === "surface");
+    const slag = state.actors.find((actor) => actor.enemyType === "slag" && actor.level === "surface");
+    expect(skeleton).toBeDefined();
+    expect(slag).toBeDefined();
+    if (!skeleton || !slag) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== skeleton.id && actor.id !== slag.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    skeleton.x = 20;
+    skeleton.y = 20;
+    slag.x = 24;
+    slag.y = 20;
+    pursue(skeleton, slag);
+    pursue(slag, skeleton);
+    state.environment.surface = [{ x: 22, y: 20, fireTurns: 0, smokeTurns: 3 }];
+    const remembered = { ...skeleton.enemyAwareness!.lastKnownPosition };
+
+    waitTurn(state);
+
+    expect(skeleton.enemyAwareness?.lastKnownPosition).toEqual(remembered);
+    expect(skeleton.x).toBeGreaterThan(20);
+  });
+
+  it("resolves identical lured faction clashes deterministically", () => {
+    const setup = (): ReturnType<typeof createGame> => {
+      const state = createGame(captain, "repeatable-ecology");
+      const skeleton = state.actors.find((actor) => actor.enemyType === "skeleton" && actor.level === "surface");
+      const slag = state.actors.find((actor) => actor.enemyType === "slag" && actor.level === "surface");
+      if (!skeleton || !slag) return state;
+      state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== skeleton.id && actor.id !== slag.id).forEach((actor) => {
+        actor.alive = false;
+      });
+      for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+      getCaptain(state).x = 10;
+      getCaptain(state).y = 10;
+      skeleton.x = 25;
+      skeleton.y = 20;
+      skeleton.enemyAwareness = { mode: "investigating", targetId: null, lastKnownPosition: { x: 30, y: 20 }, expiresAtTurn: 100 };
+      slag.x = 27;
+      slag.y = 20;
+      slag.enemyAwareness = null;
+      return state;
+    };
+    const first = setup();
+    const second = setup();
+    for (let turn = 0; turn < 5; turn += 1) {
+      waitTurn(first);
+      waitTurn(second);
+    }
+    expect(first).toEqual(second);
+  });
+
   it("generates one compatible distant special enemy on each initial level", () => {
     const seenAttributes = new Set<EnemyAttribute>();
     for (let index = 0; index < 100; index += 1) {
@@ -850,6 +993,7 @@ describe("game simulation", () => {
     if (!enemy) return;
     enemy.enemyAwareness = {
       mode: "investigating",
+      targetId: null,
       lastKnownPosition: { x: enemy.x, y: enemy.y },
       expiresAtTurn: state.turn + 2,
     };

@@ -14,6 +14,7 @@ export type ActorKind = "captain" | "crew" | "castaway" | "enemy";
 export type EnemyType = "skeleton" | "crab" | "slag" | "bonegunner";
 export type EnemyAttribute = "keenEared" | "ironclad" | "skirmishing" | "riposting";
 export type EnemyAwarenessMode = "investigating" | "pursuing";
+export type Faction = "party" | "boneCrew" | "shoreBrood" | "cinderkin" | "neutral";
 export type LevelId = "surface" | "cave";
 export type CrewOrder = "follow" | "hold" | "rally" | "attack";
 export type GamePhase = "playing" | "won" | "lost";
@@ -51,6 +52,7 @@ export interface CaptainConfig {
 
 export interface EnemyAwareness {
   mode: EnemyAwarenessMode;
+  targetId: number | null;
   lastKnownPosition: Point;
   expiresAtTurn: number;
 }
@@ -97,7 +99,7 @@ export interface SurfaceWeather {
 }
 
 export interface GameState {
-  version: 10;
+  version: 11;
   seed: string;
   rngState: number;
   levels: Record<LevelId, MapLevel>;
