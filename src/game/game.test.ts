@@ -372,6 +372,94 @@ describe("game simulation", () => {
     expect(state.messages.at(-1)).toContain("pitch barrel missing; search the cave");
   });
 
+  it("recovers nearby conscious party members at the cleared wreck", () => {
+    const state = createGame(captain, "wreck-refuge");
+    const player = getCaptain(state);
+    const crew = state.actors.filter((actor) => actor.kind === "castaway");
+    const nearby = crew[0];
+    const downed = crew[1];
+    const distant = crew[2];
+    expect(nearby).toBeDefined();
+    expect(downed).toBeDefined();
+    expect(distant).toBeDefined();
+    if (!nearby || !downed || !distant) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    const dx = player.x < state.levels.surface.width / 2 ? 1 : -1;
+    const dy = player.y < state.levels.surface.height / 2 ? 1 : -1;
+    player.hp = player.maxHp - 5;
+    nearby.kind = "crew";
+    nearby.crewTrait = "smokeShy";
+    nearby.crewAssignment = { order: "follow", targetId: null };
+    nearby.x = player.x + dx;
+    nearby.y = player.y;
+    nearby.hp = nearby.maxHp - 3;
+    downed.kind = "crew";
+    downed.crewAssignment = { order: "follow", targetId: null };
+    downed.x = player.x;
+    downed.y = player.y + dy;
+    downed.hp = 0;
+    downed.incapacitatedTurns = 5;
+    distant.kind = "crew";
+    distant.crewAssignment = { order: "hold", targetId: null };
+    distant.x = player.x + dx * 3;
+    distant.y = player.y;
+    distant.hp = distant.maxHp - 4;
+    const salts = state.inventory.salts;
+    const rngState = state.rngState;
+
+    expect(getInteractionLabel(state)).toBe("Recover at wreck");
+    expect(interact(state)).toBe(true);
+
+    expect(player.hp).toBe(player.maxHp - 3);
+    expect(nearby.hp).toBe(nearby.maxHp - 1);
+    expect(distant.hp).toBe(distant.maxHp - 4);
+    expect(downed).toMatchObject({ hp: 0, incapacitatedTurns: 4 });
+    expect(state.inventory.salts).toBe(salts);
+    expect(state.turn).toBe(1);
+    expect(state.threat).toBe(2);
+    expect(state.rngState).toBe(rngState);
+  });
+
+  it("rejects wreck recovery while a hostile prowls nearby", () => {
+    const state = createGame(captain, "unsafe-wreck-refuge");
+    const player = getCaptain(state);
+    const enemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface");
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== enemy.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    const dx = player.x < state.levels.surface.width / 2 ? 1 : -1;
+    enemy.x = player.x + dx;
+    enemy.y = player.y;
+    player.hp -= 4;
+    const hp = player.hp;
+
+    expect(getInteractionLabel(state)).toBe("Wreck unsafe");
+    expect(interact(state)).toBe(false);
+
+    expect(player.hp).toBe(hp);
+    expect(state.turn).toBe(0);
+    expect(state.threat).toBe(0);
+    expect(state.messages.at(-1)).toContain(`${enemy.name} prowls nearby`);
+  });
+
+  it("fits recovered cargo before offering wreck recovery", () => {
+    const state = createGame(captain, "repair-before-recovery");
+    const player = getCaptain(state);
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    state.recoveredParts.mast = true;
+    player.hp -= 4;
+    const hp = player.hp;
+
+    expect(getInteractionLabel(state)).toBe("Fit replacement mast");
+    expect(interact(state)).toBe(true);
+
+    expect(state.repairs.mast).toBe(true);
+    expect(player.hp).toBe(hp);
+    expect(getInteractionLabel(state)).toBe("Recover at wreck");
+  });
+
   it("installs one recovered part per turn and wins only after the final turn resolves", () => {
     const state = createGame(captain, "three-part-repair");
     state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });

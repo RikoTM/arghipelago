@@ -113,7 +113,7 @@ const TERRAIN_DETAILS: Record<Terrain, string> = {
   grass: "grass",
   jungle: "dense jungle, blocks sight, muffles sound, and provides firearm cover",
   rock: "rocky ground, blocks sight, muffles sound, and provides firearm cover",
-  wreck: "the shipwreck, provides firearm cover",
+  wreck: "the shipwreck, provides firearm cover and safe recovery after nearby threats are cleared",
   caveWall: "cave wall, impassable and blocks sight and sound",
   caveFloor: "cave floor",
   stairsDown: "stairs descending into the cave",

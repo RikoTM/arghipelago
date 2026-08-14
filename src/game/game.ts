@@ -51,6 +51,10 @@ const MIN_ESCALATION_INTERVAL = 35;
 const WAIT_ATTENTION = 2;
 const REPAIR_RECOVERY_ATTENTION = 6;
 const REPAIR_INSTALL_ATTENTION = 4;
+const WRECK_RECOVERY_ATTENTION = 3;
+const WRECK_RECOVERY_AMOUNT = 2;
+const WRECK_RECOVERY_RADIUS = 2;
+const WRECK_SAFETY_RADIUS = 6;
 
 type SoundKind = "gunfire" | "slagBurst" | "command" | "distraction" | "fireSpread";
 
@@ -2288,7 +2292,47 @@ function inspectWreck(state: GameState): void {
     const location = part === "pitch" ? "search the cave" : "search the island";
     return `${REPAIR_LABELS[part]} missing; ${location}`;
   });
-  addMessage(state, `Shipwright's tally: ${tally.join("; ")}.`);
+  addMessage(state, `Shipwright's tally: ${tally.join("; ")}. Clear nearby threats to recover vigor here.`);
+}
+
+function wreckRecoveryTargets(state: GameState): Actor[] {
+  return state.actors.filter(
+    (actor) =>
+      canAct(actor) &&
+      actor.level === "surface" &&
+      (actor.kind === "captain" || actor.kind === "crew") &&
+      distance(actor, state.wreck) <= WRECK_RECOVERY_RADIUS &&
+      actor.hp < actor.maxHp,
+  );
+}
+
+function nearbyWreckThreat(state: GameState): Actor | null {
+  const player = captain(state);
+  return state.actors.find(
+    (actor) =>
+      canAct(actor) &&
+      actor.level === "surface" &&
+      actor.kind === "enemy" &&
+      areActorsHostile(player, actor) &&
+      distance(actor, state.wreck) <= WRECK_SAFETY_RADIUS,
+  ) ?? null;
+}
+
+function recoverAtWreck(state: GameState, targets: Actor[]): boolean {
+  const threat = nearbyWreckThreat(state);
+  if (threat) {
+    addMessage(state, `The wreck is no refuge while ${threat.name} prowls nearby.`);
+    return false;
+  }
+  const recoveries = targets.map((actor) => {
+    const amount = Math.min(WRECK_RECOVERY_AMOUNT, actor.maxHp - actor.hp);
+    actor.hp += amount;
+    return `${actor.name} recovers ${amount}`;
+  });
+  state.threat += WRECK_RECOVERY_ATTENTION;
+  addMessage(state, `The party tends its wounds beneath the wreck's shelter. ${recoveries.join("; ")} vigor.`);
+  finishTurn(state);
+  return true;
 }
 
 export function getInteractionLabel(state: GameState): string {
@@ -2309,7 +2353,10 @@ export function getInteractionLabel(state: GameState): string {
   }
   if (isAtWreck(state)) {
     const part = nextRecoveredRepair(state);
-    return part ? `Fit ${REPAIR_LABELS[part]}` : "Inspect wreck";
+    if (part) return `Fit ${REPAIR_LABELS[part]}`;
+    const recoveryTargets = wreckRecoveryTargets(state);
+    if (recoveryTargets.length > 0) return nearbyWreckThreat(state) ? "Wreck unsafe" : "Recover at wreck";
+    return "Inspect wreck";
   }
   if (isAtSurf(state)) return "Douse in surf";
   return "Inspect map";
@@ -2367,6 +2414,8 @@ export function interact(state: GameState): boolean {
 
   const part = nextRecoveredRepair(state);
   if (!part) {
+    const recoveryTargets = wreckRecoveryTargets(state);
+    if (recoveryTargets.length > 0) return recoverAtWreck(state, recoveryTargets);
     inspectWreck(state);
     return false;
   }

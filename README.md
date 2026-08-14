@@ -22,6 +22,7 @@ The first playable prototype includes:
 - Deterministic squalls, rain, wet powder, and coastal dousing.
 - A procedurally generated cave containing a required repair objective.
 - Danger that escalates with time, waiting, noise, and repair progress.
+- A shipwreck refuge where a nearby, conscious party can recover after clearing local threats.
 - Repair objectives, victory, permadeath, and conditional rescue.
 - Keyboard and touch controls.
 - A monochromatic, crosshatched pen-and-ink sprite renderer.
