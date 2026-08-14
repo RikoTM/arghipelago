@@ -125,6 +125,7 @@ describe("island generation", () => {
     const second = generateIsland("same-old-island");
 
     expect(first.wreck).toEqual(second.wreck);
+    expect(first.landmarks).toEqual(second.landmarks);
     expect(first.tiles.map((tile) => tile.terrain)).toEqual(second.tiles.map((tile) => tile.terrain));
   });
 
@@ -137,6 +138,15 @@ describe("island generation", () => {
       expect(island.tiles[tileIndex(island.wreck.x, island.wreck.y, island.width)]?.terrain).toBe("wreck");
       expect(island.tiles[tileIndex(island.caveEntrance.x, island.caveEntrance.y, island.width)]?.terrain).toBe("stairsDown");
       expect(cave.tiles[tileIndex(cave.exit.x, cave.exit.y, cave.width)]?.terrain).toBe("stairsUp");
+      expect(island.tiles[tileIndex(island.landmarks.spring.x, island.landmarks.spring.y, island.width)]?.terrain).toBe("spring");
+      expect(island.tiles[tileIndex(island.landmarks.ruins.x, island.landmarks.ruins.y, island.width)]?.terrain).toBe("ruins");
+      expect(Math.max(
+        Math.abs(island.landmarks.spring.x - island.landmarks.ruins.x),
+        Math.abs(island.landmarks.spring.y - island.landmarks.ruins.y),
+      )).toBeGreaterThan(10);
+      for (const landmark of Object.values(island.landmarks)) {
+        expect(island.reachable).toContainEqual(landmark);
+      }
       const trailTiles = island.tiles.filter((tile) => tile.terrain === "trail");
       expect(trailTiles.length).toBeGreaterThanOrEqual(15);
       const markedRoute = routeTo(
@@ -157,6 +167,10 @@ describe("island generation", () => {
       })).toBe(true);
 
       const state = createGame(captain, `validation-${index}`);
+      for (const landmark of Object.values(island.landmarks)) {
+        expect(state.actors.some((actor) => actor.level === "surface" && actor.x === landmark.x && actor.y === landmark.y)).toBe(false);
+        expect(state.pickups.some((pickup) => pickup.level === "surface" && pickup.x === landmark.x && pickup.y === landmark.y)).toBe(false);
+      }
       expect(state.pickups.filter((pickup) => ["mast", "canvas", "pitch"].includes(pickup.type))).toHaveLength(3);
       expect(state.pickups.find((pickup) => pickup.type === "pitch")?.level).toBe("cave");
       expect(state.pickups.filter((pickup) => pickup.type === "pistol")).toHaveLength(1);
@@ -1254,8 +1268,8 @@ describe("game simulation", () => {
     expect(armoredState.messages.some((message) => message.includes("iron plating"))).toBe(true);
   });
 
-  it("uses jungle, rock, and wreck as cover against projectiles from either side", () => {
-    const shotStates = ["jungle", "rock", "wreck"].map((terrain) => {
+  it("uses dense terrain and landmarks as cover against projectiles from either side", () => {
+    const shotStates = ["jungle", "rock", "ruins", "wreck"].map((terrain) => {
       const open = createGame({ ...captain, knack: "deadeye" }, `captain-cover-${terrain}`);
       const covered = createGame({ ...captain, knack: "deadeye" }, `captain-cover-${terrain}`);
       const prepareCaptainShot = (state: ReturnType<typeof createGame>, cover: boolean): Actor | null => {
@@ -1277,7 +1291,7 @@ describe("game simulation", () => {
         target.enemyAttribute = null;
         if (cover) {
           const targetTile = state.levels.surface.tiles[tileIndex(target.x, target.y, state.levels.surface.width)];
-          if (targetTile) targetTile.terrain = terrain as "jungle" | "rock" | "wreck";
+          if (targetTile) targetTile.terrain = terrain as "jungle" | "rock" | "ruins" | "wreck";
         }
         state.rngState = 1;
         state.targetId = target.id;
@@ -2898,6 +2912,50 @@ describe("game simulation", () => {
     expect(state.turn).toBe(1);
     expect(isWet(state, player)).toBe(true);
     expect(isWet(state, crew)).toBe(true);
+  });
+
+  it("lets the nearby party wash at the freshwater spring", () => {
+    const state = createGame(captain, "spring-washing");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    const map = state.levels.surface;
+    const springIndex = map.tiles.findIndex((tile) => tile.terrain === "spring");
+    expect(crew).toBeDefined();
+    expect(springIndex).toBeGreaterThanOrEqual(0);
+    if (!crew || springIndex < 0) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    player.x = springIndex % map.width;
+    player.y = Math.floor(springIndex / map.width);
+    crew.kind = "crew";
+    crew.crewAssignment = { order: "follow", targetId: null };
+    crew.x = player.x + 1;
+    crew.y = player.y;
+
+    expect(getInteractionLabel(state)).toBe("Wash at spring");
+    expect(interact(state)).toBe(true);
+
+    expect(state.turn).toBe(1);
+    expect(isWet(state, player)).toBe(true);
+    expect(isWet(state, crew)).toBe(true);
+    expect(state.messages.some((message) => message.includes("freshwater spring"))).toBe(true);
+  });
+
+  it("uses signal ruins as a no-cost navigation landmark", () => {
+    const state = createGame(captain, "signal-ruins");
+    const player = getCaptain(state);
+    const map = state.levels.surface;
+    const ruinsIndex = map.tiles.findIndex((tile) => tile.terrain === "ruins");
+    expect(ruinsIndex).toBeGreaterThanOrEqual(0);
+    if (ruinsIndex < 0) return;
+    player.x = ruinsIndex % map.width;
+    player.y = Math.floor(ruinsIndex / map.width);
+
+    expect(getInteractionLabel(state)).toBe("Inspect signal ruins");
+    expect(interact(state)).toBe(false);
+
+    expect(state.turn).toBe(0);
+    expect(state.messages.at(-1)).toContain("The wreck lies");
+    expect(state.messages.at(-1)).toContain("the cave lies");
   });
 
   it("reduces environmental fire damage for wet actors", () => {

@@ -12,6 +12,7 @@ export interface GeneratedIsland {
   tiles: Tile[];
   wreck: Point;
   caveEntrance: Point;
+  landmarks: { spring: Point; ruins: Point };
   reachable: Point[];
   rngState: number;
 }
@@ -127,6 +128,15 @@ function routeBetween(tiles: Tile[], start: Point, goal: Point, width: number, h
   return route.reverse();
 }
 
+function landmarkPoint(seed: string, kind: "spring" | "ruins", candidates: Point[]): Point {
+  const point = [...candidates].sort((a, b) =>
+    coordinateNoise(`${seed}:landmark:${kind}`, b.x, b.y) - coordinateNoise(`${seed}:landmark:${kind}`, a.x, a.y) ||
+    tileIndex(a.x, a.y) - tileIndex(b.x, b.y),
+  )[0];
+  if (!point) throw new Error(`Island generation could not place the ${kind} landmark.`);
+  return point;
+}
+
 export function generateIsland(seed: string): GeneratedIsland {
   const width = WORLD_WIDTH;
   const height = WORLD_HEIGHT;
@@ -195,7 +205,44 @@ export function generateIsland(seed: string): GeneratedIsland {
     const tile = tiles[tileIndex(point.x, point.y, width)];
     if (tile) tile.terrain = "trail";
   }
-  return { width, height, tiles, wreck, caveEntrance, reachable, rngState: rng.state };
+  const landmarkCandidates = reachable.filter((point) => {
+    const terrain = tiles[tileIndex(point.x, point.y, width)]?.terrain;
+    return (
+      (terrain === "grass" || terrain === "jungle" || terrain === "rock") &&
+      Math.max(Math.abs(point.x - wreck.x), Math.abs(point.y - wreck.y)) > 8 &&
+      Math.max(Math.abs(point.x - caveEntrance.x), Math.abs(point.y - caveEntrance.y)) > 6
+    );
+  });
+  const springCandidates = landmarkCandidates.filter(
+    (point) => tiles[tileIndex(point.x, point.y, width)]?.terrain !== "rock",
+  );
+  const spring = landmarkPoint(seed, "spring", springCandidates.length > 0 ? springCandidates : landmarkCandidates);
+  const ruinCandidates = landmarkCandidates.filter((point) => point.x !== spring.x || point.y !== spring.y);
+  const distantRuinCandidates = ruinCandidates.filter(
+    (point) => Math.max(Math.abs(point.x - spring.x), Math.abs(point.y - spring.y)) > 10,
+  );
+  const separatedRuinCandidates = distantRuinCandidates.length > 0
+    ? distantRuinCandidates
+    : reachable.filter((point) => {
+        const terrain = tiles[tileIndex(point.x, point.y, width)]?.terrain;
+        return (
+          (terrain === "grass" || terrain === "jungle" || terrain === "rock") &&
+          Math.max(Math.abs(point.x - spring.x), Math.abs(point.y - spring.y)) > 10
+        );
+      });
+  const rockyRuinCandidates = separatedRuinCandidates.filter(
+    (point) => tiles[tileIndex(point.x, point.y, width)]?.terrain !== "grass",
+  );
+  const ruins = landmarkPoint(
+    seed,
+    "ruins",
+    rockyRuinCandidates.length > 0 ? rockyRuinCandidates : separatedRuinCandidates,
+  );
+  const springTile = tiles[tileIndex(spring.x, spring.y, width)];
+  const ruinsTile = tiles[tileIndex(ruins.x, ruins.y, width)];
+  if (springTile) springTile.terrain = "spring";
+  if (ruinsTile) ruinsTile.terrain = "ruins";
+  return { width, height, tiles, wreck, caveEntrance, landmarks: { spring, ruins }, reachable, rngState: rng.state };
 }
 
 interface Room {

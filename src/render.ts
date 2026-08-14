@@ -176,6 +176,28 @@ function drawTerrain(context: CanvasRenderingContext2D, terrain: Terrain): void 
     context.globalAlpha = 1;
     return;
   }
+  if (terrain === "spring") {
+    context.fillStyle = "#b9b79d";
+    context.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+    context.fillStyle = SEA;
+    context.beginPath();
+    context.ellipse(16, 18, 12, 8, -0.1, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = INK;
+    context.lineWidth = 1;
+    context.stroke();
+    inkLine(context, [[4, 28], [7, 21], [9, 28], [12, 23]], 1, PALE_INK);
+    inkLine(context, [[24, 11], [26, 5], [28, 12], [31, 7]], 1, PALE_INK);
+    return;
+  }
+  if (terrain === "ruins") {
+    context.fillStyle = "#b0a58b";
+    context.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+    inkLine(context, [[2, 29], [5, 13], [12, 13], [12, 7], [19, 7], [19, 17], [27, 17], [30, 29]], 3);
+    inkLine(context, [[5, 24], [12, 20], [19, 24], [27, 21]], 1, PALE_INK);
+    hatch(context, 6, PALE_INK, true);
+    return;
+  }
   if (terrain === "jungle") {
     context.fillStyle = "#b5aa8d";
     context.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
@@ -397,7 +419,7 @@ function makeSprite(kind: SpriteKind, coat: Coat): HTMLCanvasElement {
   const context = sprite.getContext("2d");
   if (!context) throw new Error("Canvas rendering is unavailable.");
 
-  if (["water", "sand", "grass", "trail", "jungle", "rock", "wreck", "caveWall", "caveFloor", "stairsDown", "stairsUp"].includes(kind)) {
+  if (["water", "sand", "grass", "trail", "spring", "ruins", "jungle", "rock", "wreck", "caveWall", "caveFloor", "stairsDown", "stairsUp"].includes(kind)) {
     drawTerrain(context, kind as Terrain);
   } else if (kind === "captain") drawPerson(context, COAT_COLORS[coat]);
   else if (kind === "crew") drawPerson(context, "#585a50", false);

@@ -43,7 +43,7 @@ const FIRE_SMOKE_TURNS = 5;
 const FIRE_DAMAGE = 2;
 const MUZZLE_SMOKE_TURNS = 3;
 const RAIN_WET_TURNS = 2;
-const SURF_WET_TURNS = 4;
+const DOUSE_WET_TURNS = 4;
 const ATTENTION_ESCALATION_THRESHOLD = 10;
 const ESCALATION_COOLDOWN_TURNS = 12;
 const BASE_ESCALATION_INTERVAL = 60;
@@ -152,7 +152,7 @@ const ATTRIBUTE_COMPATIBILITY: Record<EnemyAttribute, EnemyType[]> = {
 
 const ENEMY_ATTRIBUTES = Object.keys(ATTRIBUTE_NAMES) as EnemyAttribute[];
 
-const RAIN_EXPOSED_TERRAIN: Terrain[] = ["sand", "grass", "trail", "rock"];
+const RAIN_EXPOSED_TERRAIN: Terrain[] = ["sand", "grass", "trail", "spring", "ruins", "rock"];
 const CREW_TRAITS: CrewTrait[] = ["smokeShy", "powderShy", "shipmate"];
 
 export interface MapInspection {
@@ -467,10 +467,12 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
   const cave = generateCave(seed);
   const rng = new Rng(island.rngState ^ cave.rngState);
   const privateerHealth = config.background === "privateer" ? 2 : 0;
+  const landmarkIndices = new Set(Object.values(island.landmarks).map((point) => tileIndex(point.x, point.y, island.width)));
   const pool = island.reachable.filter(
     (point) =>
       distance(point, island.wreck) > 2 &&
       (point.x !== island.caveEntrance.x || point.y !== island.caveEntrance.y) &&
+      !landmarkIndices.has(tileIndex(point.x, point.y, island.width)) &&
       island.tiles[tileIndex(point.x, point.y, island.width)]?.terrain !== "water",
   );
   const actors: Actor[] = [
@@ -818,7 +820,7 @@ function damageActor(
 function terrainCover(state: GameState, target: Actor): number {
   const map = state.levels[target.level];
   const terrain = map.tiles[tileIndex(target.x, target.y, map.width)]?.terrain;
-  return terrain === "jungle" || terrain === "rock" || terrain === "wreck" ? 1 : 0;
+  return terrain === "jungle" || terrain === "rock" || terrain === "ruins" || terrain === "wreck" ? 1 : 0;
 }
 
 function armorName(armor: ArmorType): string {
@@ -2269,7 +2271,7 @@ function isAtSurf(state: GameState): boolean {
   });
 }
 
-function douseParty(state: GameState): void {
+function douseParty(state: GameState, source: "spring" | "surf"): void {
   const player = captain(state);
   for (const actor of state.actors) {
     if (
@@ -2278,10 +2280,15 @@ function douseParty(state: GameState): void {
       (actor.kind === "captain" || actor.kind === "crew") &&
       distance(player, actor) <= 1
     ) {
-      actor.wetUntilTurn = Math.max(actor.wetUntilTurn, state.turn + SURF_WET_TURNS + 1);
+      actor.wetUntilTurn = Math.max(actor.wetUntilTurn, state.turn + DOUSE_WET_TURNS + 1);
     }
   }
-  addMessage(state, "The party douses itself in the surf. Fire seems less concerning; powder seems more so.");
+  addMessage(
+    state,
+    source === "spring"
+      ? "The party washes in the freshwater spring. Fire seems less concerning; powder seems more so."
+      : "The party douses itself in the surf. Fire seems less concerning; powder seems more so.",
+  );
   finishTurn(state);
 }
 
@@ -2351,6 +2358,8 @@ export function getInteractionLabel(state: GameState): string {
   if (groundEquipment && isArmorPickup(groundEquipment.type)) {
     return `Pick up ${armorName(groundEquipment.type)}`;
   }
+  if (terrain === "spring") return "Wash at spring";
+  if (terrain === "ruins") return "Inspect signal ruins";
   if (isAtWreck(state)) {
     const part = nextRecoveredRepair(state);
     if (part) return `Fit ${REPAIR_LABELS[part]}`;
@@ -2403,8 +2412,19 @@ export function interact(state: GameState): boolean {
     finishTurn(state);
     return true;
   }
+  if (terrain === "spring") {
+    douseParty(state, "spring");
+    return true;
+  }
+  if (terrain === "ruins") {
+    addMessage(
+      state,
+      `The old signal ruins still command the skyline. The wreck lies ${directionFrom(player, state.wreck)}; the cave lies ${directionFrom(player, state.caveEntrance)}.`,
+    );
+    return false;
+  }
   if (isAtSurf(state)) {
-    douseParty(state);
+    douseParty(state, "surf");
     return true;
   }
   if (!isAtWreck(state)) {

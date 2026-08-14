@@ -4,7 +4,7 @@ A browser-first, tile-based traditional roguelike about a shipwrecked captain, a
 
 The first playable prototype includes:
 
-- Seeded procedural island generation, a readable wreck-to-cave trail, and fog of war.
+- Seeded procedural island generation, a readable wreck-to-cave trail, guaranteed surface landmarks, and fog of war.
 - Eight-direction turn-based movement and melee bump attacks.
 - A flintlock with targeting, noise, ammunition, and reloading.
 - Three recruitable crew members with spatially delivered orders and close, ranged, and avoid stances.

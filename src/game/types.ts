@@ -3,6 +3,8 @@ export type Terrain =
   | "sand"
   | "grass"
   | "trail"
+  | "spring"
+  | "ruins"
   | "jungle"
   | "rock"
   | "wreck"
