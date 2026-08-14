@@ -99,6 +99,34 @@ function isCoast(tiles: Tile[], x: number, y: number, width: number, height: num
   return false;
 }
 
+function routeBetween(tiles: Tile[], start: Point, goal: Point, width: number, height: number): Point[] {
+  const queue = [start];
+  const previous = new Map<number, Point | null>([[tileIndex(start.x, start.y, width), null]]);
+  const goalIndex = tileIndex(goal.x, goal.y, width);
+  for (let cursor = 0; cursor < queue.length && !previous.has(goalIndex); cursor += 1) {
+    const current = queue[cursor];
+    if (!current) continue;
+    for (const direction of NEIGHBORS) {
+      const point = { x: current.x + direction.x, y: current.y + direction.y };
+      const index = tileIndex(point.x, point.y, width);
+      const tile = tiles[index];
+      if (!inBounds(point.x, point.y, width, height) || previous.has(index) || !tile || !isPassableTerrain(tile.terrain)) {
+        continue;
+      }
+      previous.set(index, current);
+      queue.push(point);
+    }
+  }
+  if (!previous.has(goalIndex)) return [];
+  const route: Point[] = [];
+  let point: Point | null = goal;
+  while (point && (point.x !== start.x || point.y !== start.y)) {
+    route.push(point);
+    point = previous.get(tileIndex(point.x, point.y, width)) ?? null;
+  }
+  return route.reverse();
+}
+
 export function generateIsland(seed: string): GeneratedIsland {
   const width = WORLD_WIDTH;
   const height = WORLD_HEIGHT;
@@ -162,6 +190,11 @@ export function generateIsland(seed: string): GeneratedIsland {
   if (!caveEntrance) throw new Error("Island generation could not place a cave entrance.");
   const entranceTile = tiles[tileIndex(caveEntrance.x, caveEntrance.y, width)];
   if (entranceTile) entranceTile.terrain = "stairsDown";
+  const route = routeBetween(tiles, wreck, caveEntrance, width, height);
+  for (const point of route.slice(0, -1)) {
+    const tile = tiles[tileIndex(point.x, point.y, width)];
+    if (tile) tile.terrain = "trail";
+  }
   return { width, height, tiles, wreck, caveEntrance, reachable, rngState: rng.state };
 }
 

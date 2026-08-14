@@ -152,7 +152,7 @@ const ATTRIBUTE_COMPATIBILITY: Record<EnemyAttribute, EnemyType[]> = {
 
 const ENEMY_ATTRIBUTES = Object.keys(ATTRIBUTE_NAMES) as EnemyAttribute[];
 
-const RAIN_EXPOSED_TERRAIN: Terrain[] = ["sand", "grass", "rock"];
+const RAIN_EXPOSED_TERRAIN: Terrain[] = ["sand", "grass", "trail", "rock"];
 const CREW_TRAITS: CrewTrait[] = ["smokeShy", "powderShy", "shipmate"];
 
 export interface MapInspection {

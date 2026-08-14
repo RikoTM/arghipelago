@@ -111,6 +111,7 @@ const TERRAIN_DETAILS: Record<Terrain, string> = {
   water: "open water, impassable",
   sand: "sand",
   grass: "grass",
+  trail: "a tar-marked trail linking the wreck and cave",
   jungle: "dense jungle, blocks sight, muffles sound, and provides firearm cover",
   rock: "rocky ground, blocks sight, muffles sound, and provides firearm cover",
   wreck: "the shipwreck, provides firearm cover and safe recovery after nearby threats are cleared",

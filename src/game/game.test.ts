@@ -34,7 +34,7 @@ import {
   visibleEnemies,
   waitTurn,
 } from "./game";
-import type { Actor, CaptainConfig, CrewTrait, EnemyAttribute, MeleeWeapon } from "./types";
+import type { Actor, CaptainConfig, CrewTrait, EnemyAttribute, MeleeWeapon, Terrain } from "./types";
 import { generateCave, generateIsland, isPassableTerrain, tileIndex } from "./world";
 
 const captain: CaptainConfig = {
@@ -87,6 +87,7 @@ function routeTo(
   height: number,
   start: { x: number; y: number },
   goal: { x: number; y: number },
+  canTraverse: (terrain: Terrain) => boolean = isPassableTerrain,
 ): Array<{ x: number; y: number }> {
   const queue = [start];
   const previous = new Map<number, { x: number; y: number } | null>([[tileIndex(start.x, start.y, width), null]]);
@@ -102,13 +103,14 @@ function routeTo(
       const tile = tiles[index];
       if (
         next.x < 0 || next.y < 0 || next.x >= width || next.y >= height ||
-        previous.has(index) || !tile || !isPassableTerrain(tile.terrain)
+        previous.has(index) || !tile || !canTraverse(tile.terrain)
       ) continue;
       previous.set(index, point);
       queue.push(next);
     }
   }
   const route: Array<{ x: number; y: number }> = [];
+  if (!previous.has(tileIndex(goal.x, goal.y, width))) return route;
   let point: { x: number; y: number } | null | undefined = goal;
   while (point && (point.x !== start.x || point.y !== start.y)) {
     route.push(point);
@@ -135,6 +137,20 @@ describe("island generation", () => {
       expect(island.tiles[tileIndex(island.wreck.x, island.wreck.y, island.width)]?.terrain).toBe("wreck");
       expect(island.tiles[tileIndex(island.caveEntrance.x, island.caveEntrance.y, island.width)]?.terrain).toBe("stairsDown");
       expect(cave.tiles[tileIndex(cave.exit.x, cave.exit.y, cave.width)]?.terrain).toBe("stairsUp");
+      const trailTiles = island.tiles.filter((tile) => tile.terrain === "trail");
+      expect(trailTiles.length).toBeGreaterThanOrEqual(15);
+      const markedRoute = routeTo(
+        island.tiles,
+        island.width,
+        island.height,
+        island.wreck,
+        island.caveEntrance,
+        (terrain) => terrain === "wreck" || terrain === "trail" || terrain === "stairsDown",
+      );
+      expect(markedRoute.at(-1)).toEqual(island.caveEntrance);
+      expect(markedRoute.slice(0, -1).every((point) =>
+        island.tiles[tileIndex(point.x, point.y, island.width)]?.terrain === "trail",
+      )).toBe(true);
       expect(island.reachable.every((point) => {
         const tile = island.tiles[tileIndex(point.x, point.y, island.width)];
         return tile ? isPassableTerrain(tile.terrain) : false;
@@ -2807,6 +2823,8 @@ describe("game simulation", () => {
     player.y = 20;
     exposed.x = 21;
     exposed.y = 20;
+    const trail = state.levels.surface.tiles[tileIndex(21, 20, state.levels.surface.width)];
+    if (trail) trail.terrain = "trail";
     sheltered.x = 22;
     sheltered.y = 20;
     const shelter = state.levels.surface.tiles[tileIndex(22, 20, state.levels.surface.width)];

@@ -164,6 +164,18 @@ function drawTerrain(context: CanvasRenderingContext2D, terrain: Terrain): void 
     inkLine(context, [[22, 12], [24, 7], [25, 13], [29, 6]], 1, PALE_INK);
     return;
   }
+  if (terrain === "trail") {
+    context.fillStyle = "#c5b48f";
+    context.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
+    inkLine(context, [[0, 7], [8, 10], [17, 8], [25, 11], [32, 9]], 1, PALE_INK);
+    inkLine(context, [[0, 24], [8, 21], [17, 23], [25, 20], [32, 22]], 1, PALE_INK);
+    context.fillStyle = INK;
+    context.globalAlpha = 0.45;
+    context.fillRect(7, 15, 5, 2);
+    context.fillRect(21, 14, 4, 2);
+    context.globalAlpha = 1;
+    return;
+  }
   if (terrain === "jungle") {
     context.fillStyle = "#b5aa8d";
     context.fillRect(0, 0, TILE_SIZE, TILE_SIZE);
@@ -385,7 +397,7 @@ function makeSprite(kind: SpriteKind, coat: Coat): HTMLCanvasElement {
   const context = sprite.getContext("2d");
   if (!context) throw new Error("Canvas rendering is unavailable.");
 
-  if (["water", "sand", "grass", "jungle", "rock", "wreck", "caveWall", "caveFloor", "stairsDown", "stairsUp"].includes(kind)) {
+  if (["water", "sand", "grass", "trail", "jungle", "rock", "wreck", "caveWall", "caveFloor", "stairsDown", "stairsUp"].includes(kind)) {
     drawTerrain(context, kind as Terrain);
   } else if (kind === "captain") drawPerson(context, COAT_COLORS[coat]);
   else if (kind === "crew") drawPerson(context, "#585a50", false);
