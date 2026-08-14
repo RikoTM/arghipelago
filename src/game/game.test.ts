@@ -4,11 +4,15 @@ import {
   commandCrewAttack,
   createGame,
   cycleCrewOrder,
+  cycleCrewStance,
+  dropFirearm,
+  dropMeleeWeapon,
   fireFlintlock,
   environmentAt,
   firePitchShot,
   getCaptain,
   getFaction,
+  getMeleeTransferLabel,
   getInteractionLabel,
   getRunSummary,
   inspectMapPoint,
@@ -19,13 +23,15 @@ import {
   moveCaptain,
   reloadFlintlock,
   throwStone,
+  transferFirearm,
+  transferMeleeWeapon,
   updateVisibility,
   useSmellingSalts,
   useStairs,
   visibleEnemies,
   waitTurn,
 } from "./game";
-import type { Actor, CaptainConfig, CrewTrait, EnemyAttribute } from "./types";
+import type { Actor, CaptainConfig, CrewTrait, EnemyAttribute, MeleeWeapon } from "./types";
 import { generateCave, generateIsland, isPassableTerrain, tileIndex } from "./world";
 
 const captain: CaptainConfig = {
@@ -106,6 +112,8 @@ describe("island generation", () => {
       const state = createGame(captain, `validation-${index}`);
       expect(state.pickups.filter((pickup) => ["mast", "canvas", "pitch"].includes(pickup.type))).toHaveLength(3);
       expect(state.pickups.find((pickup) => pickup.type === "pitch")?.level).toBe("cave");
+      expect(state.pickups.filter((pickup) => pickup.type === "pistol")).toHaveLength(1);
+      expect(state.pickups.filter((pickup) => pickup.type === "boardingAxe")).toHaveLength(1);
       expect(state.actors.filter((actor) => actor.kind === "castaway")).toHaveLength(3);
     }
   });
@@ -134,10 +142,102 @@ describe("game simulation", () => {
     expect(first.actors).toEqual(second.actors);
   });
 
+  it("starts the captain and castaways with explicit role-appropriate loadouts", () => {
+    const state = createGame(captain, "starting-loadouts");
+    const player = getCaptain(state);
+    const carpenter = state.actors.find((actor) => actor.role?.startsWith("Carpenter"));
+    const surgeon = state.actors.find((actor) => actor.role?.startsWith("Surgeon"));
+    const gunner = state.actors.find((actor) => actor.role?.startsWith("Gunner"));
+
+    expect(player).toMatchObject({ meleeWeapon: "cutlass", rangedWeapon: "flintlock", rangedLoaded: true });
+    expect(carpenter).toMatchObject({ meleeWeapon: "cutlass", rangedWeapon: null, rangedLoaded: false });
+    expect(surgeon).toMatchObject({ meleeWeapon: "knife", rangedWeapon: null, rangedLoaded: false });
+    expect(gunner).toMatchObject({ meleeWeapon: "cutlass", rangedWeapon: "pistol", rangedLoaded: true });
+  });
+
+  it("leaves generated firearms on the ground until deliberately picked up", () => {
+    const state = createGame(captain, "ground-pistol-cache");
+    const player = getCaptain(state);
+    const pistol = state.pickups.find((pickup) => pickup.type === "pistol");
+    expect(pistol).toBeDefined();
+    if (!pistol) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    player.x = pistol.x;
+    player.y = pistol.y;
+
+    waitTurn(state);
+
+    expect(pistol.collected).toBe(false);
+    expect(getInteractionLabel(state)).toBe("Pick up pistol");
+    expect(interact(state)).toBe(false);
+    expect(state.turn).toBe(1);
+
+    player.rangedWeapon = null;
+    player.rangedLoaded = false;
+    expect(interact(state)).toBe(true);
+    expect(player).toMatchObject({ rangedWeapon: "pistol", rangedLoaded: true });
+    expect(pistol.collected).toBe(true);
+    expect(state.turn).toBe(2);
+  });
+
+  it("drops and retrieves a firearm without losing its loaded state", () => {
+    const state = createGame(captain, "ground-firearm-round-trip");
+    const player = getCaptain(state);
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+
+    expect(dropFirearm(state)).toBe(true);
+    const dropped = state.pickups.find(
+      (pickup) => !pickup.collected && pickup.type === "flintlock" && pickup.x === player.x && pickup.y === player.y,
+    );
+    expect(dropped).toMatchObject({ loaded: true, level: "surface" });
+    expect(player).toMatchObject({ rangedWeapon: null, rangedLoaded: false });
+    expect(getInteractionLabel(state)).toBe("Pick up flintlock");
+    expect(dropFirearm(state)).toBe(false);
+    expect(state.turn).toBe(1);
+
+    expect(interact(state)).toBe(true);
+    expect(player).toMatchObject({ rangedWeapon: "flintlock", rangedLoaded: true });
+    expect(dropped?.collected).toBe(true);
+    expect(state.turn).toBe(2);
+  });
+
+  it("deliberately equips, drops, and retrieves the generated boarding axe", () => {
+    const state = createGame(captain, "ground-boarding-axe");
+    const player = getCaptain(state);
+    const axe = state.pickups.find((pickup) => pickup.type === "boardingAxe");
+    expect(axe).toBeDefined();
+    if (!axe) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    player.x = axe.x;
+    player.y = axe.y;
+
+    waitTurn(state);
+    expect(axe.collected).toBe(false);
+    expect(getInteractionLabel(state)).toBe("Pick up boarding axe");
+    expect(interact(state)).toBe(false);
+
+    player.meleeWeapon = null;
+    expect(interact(state)).toBe(true);
+    expect(player.meleeWeapon).toBe("boardingAxe");
+    expect(axe.collected).toBe(true);
+
+    expect(dropMeleeWeapon(state)).toBe(true);
+    const dropped = state.pickups.find(
+      (pickup) => !pickup.collected && pickup.type === "boardingAxe" && pickup.x === player.x && pickup.y === player.y,
+    );
+    expect(dropped).toMatchObject({ loaded: false, level: "surface" });
+    expect(player.meleeWeapon).toBeNull();
+    expect(getInteractionLabel(state)).toBe("Pick up boarding axe");
+
+    expect(interact(state)).toBe(true);
+    expect(player.meleeWeapon).toBe("boardingAxe");
+    expect(dropped?.collected).toBe(true);
+  });
+
   it("round-trips the complete active run through JSON storage", () => {
     const state = createGame(captain, "save-round-trip");
     const restored = JSON.parse(JSON.stringify(state)) as typeof state;
-    expect(restored.version).toBe(13);
+    expect(restored.version).toBe(18);
     expect(restored.environment).toEqual({ surface: [], cave: [] });
     expect(restored.surfaceWeather.phase).toBe("fair");
     expect(restored).toEqual(state);
@@ -185,6 +285,7 @@ describe("game simulation", () => {
 
     expect(mast.collected).toBe(true);
     expect(state.recoveredParts.mast).toBe(true);
+    expect(state.threat).toBe(7);
     expect(state.repairs.mast).toBe(false);
     expect(state.phase).toBe("playing");
   });
@@ -1055,6 +1156,48 @@ describe("game simulation", () => {
     expect(covered.messages.some((message) => message.includes("terrain cover"))).toBe(true);
   });
 
+  it("applies distinct melee damage from knives, cutlasses, and boarding axes", () => {
+    const knifeState = createGame(captain, "melee-weapon-damage");
+    const cutlassState = createGame(captain, "melee-weapon-damage");
+    const axeState = createGame(captain, "melee-weapon-damage");
+    const prepare = (state: ReturnType<typeof createGame>, weapon: MeleeWeapon): Actor | null => {
+      const player = getCaptain(state);
+      const target = state.actors.find(
+        (actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType === "skeleton",
+      );
+      if (!target) return null;
+      state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== target.id).forEach((actor) => {
+        actor.alive = false;
+      });
+      for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+      player.x = 20;
+      player.y = 20;
+      player.meleeWeapon = weapon;
+      target.x = 21;
+      target.y = 20;
+      target.hp = 20;
+      target.maxHp = 20;
+      target.enemyAttribute = null;
+      target.enemyAwareness = null;
+      state.rngState = 1;
+      return target;
+    };
+    const knifeTarget = prepare(knifeState, "knife");
+    const cutlassTarget = prepare(cutlassState, "cutlass");
+    const axeTarget = prepare(axeState, "boardingAxe");
+    expect(knifeTarget).not.toBeNull();
+    expect(cutlassTarget).not.toBeNull();
+    expect(axeTarget).not.toBeNull();
+    if (!knifeTarget || !cutlassTarget || !axeTarget) return;
+
+    moveCaptain(knifeState, 1, 0);
+    moveCaptain(cutlassState, 1, 0);
+    moveCaptain(axeState, 1, 0);
+
+    expect(cutlassTarget.hp).toBe(knifeTarget.hp - 1);
+    expect(axeTarget.hp).toBe(cutlassTarget.hp - 1);
+  });
+
   it("adds melee damage when a same-faction ally is exactly opposite the target", () => {
     const open = createGame({ ...captain, knack: "deadeye" }, "party-flanking");
     const flanked = createGame({ ...captain, knack: "deadeye" }, "party-flanking");
@@ -1284,12 +1427,61 @@ describe("game simulation", () => {
     expect(visibleEnemies(state)).toContain(crab);
   });
 
-  it("delays reinforcement spawns until turn 60", () => {
-    const state = createGame(captain, "slow-reinforcements");
+  it("keeps the opening quiet, then makes repeated waiting attract reinforcements", () => {
+    const state = createGame(captain, "restless-reinforcements");
     const initialCount = state.actors.filter((actor) => actor.level === "surface" && actor.kind === "enemy").length;
-    for (let turn = 0; turn < 59; turn += 1) waitTurn(state);
+    for (let turn = 0; turn < 11; turn += 1) waitTurn(state);
     expect(state.actors.filter((actor) => actor.level === "surface" && actor.kind === "enemy")).toHaveLength(initialCount);
+    expect(state.dangerLevel).toBe(0);
+
+    waitTurn(state);
+
+    expect(state.actors.filter((actor) => actor.level === "surface" && actor.kind === "enemy")).toHaveLength(initialCount + 1);
+    expect(state.dangerLevel).toBe(1);
+    expect(state.lastEscalationTurn).toBe(12);
+    expect(state.messages.some((message) => message.includes("recent activity"))).toBe(true);
     expect(state.phase).toBe("playing");
+  });
+
+  it("still escalates from elapsed time without accumulated attention", () => {
+    const state = createGame(captain, "timed-reinforcements");
+    const initialCount = state.actors.filter((actor) => actor.level === "surface" && actor.kind === "enemy").length;
+    state.turn = 59;
+    state.threat = 0;
+
+    waitTurn(state);
+
+    expect(state.actors.filter((actor) => actor.level === "surface" && actor.kind === "enemy")).toHaveLength(initialCount + 1);
+    expect(state.lastEscalationTurn).toBe(60);
+  });
+
+  it("lets gunfire trigger an early escalation after the opening cooldown", () => {
+    const state = createGame(captain, "noisy-reinforcements");
+    const player = getCaptain(state);
+    const target = state.actors.find(
+      (actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType === "skeleton",
+    );
+    expect(target).toBeDefined();
+    if (!target) return;
+    const initialCount = state.actors.filter((actor) => actor.level === "surface" && actor.kind === "enemy").length;
+    const targetTile = state.levels.surface.tiles[tileIndex(player.x + 2, player.y, state.levels.surface.width)];
+    expect(targetTile).toBeDefined();
+    if (!targetTile) return;
+    targetTile.terrain = "grass";
+    target.x = player.x + 2;
+    target.y = player.y;
+    target.hp = 20;
+    target.maxHp = 20;
+    target.enemyAwareness = null;
+    state.turn = 11;
+    state.targetId = target.id;
+    updateVisibility(state);
+
+    expect(fireFlintlock(state)).toBe(true);
+
+    expect(state.actors.filter((actor) => actor.level === "surface" && actor.kind === "enemy")).toHaveLength(initialCount + 1);
+    expect(state.dangerLevel).toBe(1);
+    expect(state.lastEscalationTurn).toBe(12);
   });
 
   it("keeps a direct opening expedition to the cave survivable across seeds", () => {
@@ -1326,7 +1518,7 @@ describe("game simulation", () => {
     state.targetId = enemy.id;
 
     expect(fireFlintlock(state)).toBe(true);
-    expect(state.inventory.loaded).toBe(false);
+    expect(player.rangedLoaded).toBe(false);
     expect(state.threat).toBeGreaterThan(6);
     expect(environmentAt(state, "surface", player)).toMatchObject({ fireTurns: 0, smokeTurns: 2 });
     expect(fireFlintlock(state)).toBe(false);
@@ -1334,16 +1526,17 @@ describe("game simulation", () => {
 
   it("rejects pitch shots without recovered pitch or a valid shot", () => {
     const state = createGame(captain, "invalid-pitch-shot");
-    const loaded = state.inventory.loaded;
+    const player = getCaptain(state);
+    const loaded = player.rangedLoaded;
 
     expect(firePitchShot(state)).toBe(false);
     expect(state.turn).toBe(0);
-    expect(state.inventory.loaded).toBe(loaded);
+    expect(player.rangedLoaded).toBe(loaded);
 
     state.recoveredParts.pitch = true;
     expect(firePitchShot(state)).toBe(false);
     expect(state.turn).toBe(0);
-    expect(state.inventory.loaded).toBe(loaded);
+    expect(player.rangedLoaded).toBe(loaded);
   });
 
   it("uses recovered pitch for a guaranteed incendiary shot without consuming the repair", () => {
@@ -1373,7 +1566,7 @@ describe("game simulation", () => {
 
     expect(target.hp).toBe(18);
     expect(state.recoveredParts.pitch).toBe(true);
-    expect(state.inventory.loaded).toBe(false);
+    expect(player.rangedLoaded).toBe(false);
     expect(state.turn).toBe(1);
     expect(environmentAt(state, "surface", { x: 24, y: 20 })).toMatchObject({ fireTurns: 2, smokeTurns: 4 });
     expect(environmentAt(state, "surface", player)).toMatchObject({ fireTurns: 0, smokeTurns: 2 });
@@ -1483,6 +1676,189 @@ describe("game simulation", () => {
 
     expect(cycleCrewOrder(state)).toBe("follow");
     expect(crew.crewAssignment).toEqual({ order: "follow", targetId: null });
+  });
+
+  it("passes the captain's firearm to adjacent crew and recovers it from a casualty", () => {
+    const state = createGame(captain, "firearm-handoff");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway" && actor.rangedWeapon === null);
+    expect(crew).toBeDefined();
+    if (!crew) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    player.x = 20;
+    player.y = 20;
+    crew.kind = "crew";
+    crew.crewAssignment = { order: "follow", targetId: null };
+    crew.x = 21;
+    crew.y = 20;
+
+    expect(transferFirearm(state)).toBe(true);
+    expect(player).toMatchObject({ rangedWeapon: null, rangedLoaded: false });
+    expect(crew).toMatchObject({ rangedWeapon: "flintlock", rangedLoaded: true });
+    expect(state.turn).toBe(1);
+    expect(fireFlintlock(state)).toBe(false);
+    expect(state.turn).toBe(1);
+
+    crew.alive = false;
+    expect(transferFirearm(state)).toBe(true);
+    expect(player).toMatchObject({ rangedWeapon: "flintlock", rangedLoaded: true });
+    expect(crew).toMatchObject({ rangedWeapon: null, rangedLoaded: false });
+    expect(state.turn).toBe(2);
+  });
+
+  it("swaps melee weapons with adjacent crew and recovers one from a casualty", () => {
+    const state = createGame(captain, "melee-handoff");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway" && actor.role?.startsWith("Surgeon"));
+    expect(crew).toBeDefined();
+    if (!crew) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    player.x = 20;
+    player.y = 20;
+    player.meleeWeapon = "boardingAxe";
+    crew.kind = "crew";
+    crew.crewAssignment = { order: "follow", targetId: null };
+    crew.x = 21;
+    crew.y = 20;
+
+    expect(getMeleeTransferLabel(state)).toBe(`Swap for knife with ${crew.name}`);
+    expect(transferMeleeWeapon(state)).toBe(true);
+    expect(player.meleeWeapon).toBe("knife");
+    expect(crew.meleeWeapon).toBe("boardingAxe");
+    expect(state.turn).toBe(1);
+
+    player.meleeWeapon = null;
+    crew.alive = false;
+    expect(getMeleeTransferLabel(state)).toBe(`Retrieve boarding axe from ${crew.name}`);
+    expect(transferMeleeWeapon(state)).toBe(true);
+    expect(player.meleeWeapon).toBe("boardingAxe");
+    expect(crew.meleeWeapon).toBeNull();
+    expect(state.turn).toBe(2);
+  });
+
+  it("does not spend a turn transferring equipment without adjacent crew", () => {
+    const state = createGame(captain, "lonely-equipment-manager");
+
+    expect(transferFirearm(state)).toBe(false);
+    expect(transferMeleeWeapon(state)).toBe(false);
+    expect(state.turn).toBe(0);
+    expect(getCaptain(state).rangedWeapon).toBe("flintlock");
+  });
+
+  it("lets an equipped non-gunner use the ranged stance with lower training", () => {
+    const state = createGame(captain, "armed-carpenter");
+    const player = getCaptain(state);
+    const crew = state.actors.find(
+      (actor) => actor.kind === "castaway" && actor.role?.startsWith("Carpenter"),
+    );
+    const target = state.actors.find(
+      (actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType === "skeleton",
+    );
+    expect(crew).toBeDefined();
+    expect(target).toBeDefined();
+    if (!crew || !target) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== target.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    crew.kind = "crew";
+    crew.crewTrait = "shipmate";
+    crew.crewAssignment = { order: "follow", targetId: null };
+    crew.x = 21;
+    crew.y = 20;
+    target.x = 26;
+    target.y = 20;
+    target.hp = 20;
+    target.maxHp = 20;
+    target.enemyAwareness = null;
+    state.targetId = target.id;
+    updateVisibility(state);
+
+    expect(transferFirearm(state)).toBe(true);
+    expect(cycleCrewStance(state)).toBe("ranged");
+    expect(commandCrewAttack(state)).toBe(true);
+
+    expect(crew.rangedWeapon).toBe("flintlock");
+    expect(crew.rangedLoaded).toBe(false);
+    expect(state.messages.some((message) => message.includes(`${crew.name} fires a flintlock`))).toBe(true);
+  });
+
+  it("has a ranged gunner fire and reload from the party's shot supply", () => {
+    const state = createGame(captain, "crew-pistol-drill");
+    const player = getCaptain(state);
+    const gunner = state.actors.find((actor) => actor.kind === "castaway" && actor.role?.startsWith("Gunner"));
+    const target = state.actors.find(
+      (actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType === "skeleton",
+    );
+    expect(gunner).toBeDefined();
+    expect(target).toBeDefined();
+    if (!gunner || !target) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== target.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    gunner.kind = "crew";
+    gunner.crewTrait = "shipmate";
+    gunner.crewAssignment = { order: "follow", targetId: null };
+    gunner.x = 21;
+    gunner.y = 20;
+    target.x = 26;
+    target.y = 20;
+    target.hp = 20;
+    target.maxHp = 20;
+    target.enemyAwareness = null;
+    state.targetId = target.id;
+    updateVisibility(state);
+
+    expect(cycleCrewStance(state)).toBe("ranged");
+    expect(gunner.crewStance).toBe("ranged");
+    expect(commandCrewAttack(state)).toBe(true);
+    expect(gunner.rangedLoaded).toBe(false);
+    expect(state.messages.some((message) => message.includes(`${gunner.name} fires`))).toBe(true);
+    expect(state.threat).toBeGreaterThan(10);
+
+    const ammoBeforeReload = state.inventory.ammo;
+    waitTurn(state);
+    expect(gunner.rangedLoaded).toBe(true);
+    expect(state.inventory.ammo).toBe(ammoBeforeReload - 1);
+  });
+
+  it("has crew in the avoid stance retreat instead of making opportunistic melee attacks", () => {
+    const state = createGame(captain, "crew-avoids-trouble");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    const target = state.actors.find(
+      (actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType === "skeleton",
+    );
+    expect(crew).toBeDefined();
+    expect(target).toBeDefined();
+    if (!crew || !target) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== target.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    crew.kind = "crew";
+    crew.crewAssignment = { order: "follow", targetId: null };
+    crew.crewStance = "avoid";
+    crew.x = 21;
+    crew.y = 20;
+    target.x = 22;
+    target.y = 20;
+    target.hp = 20;
+    target.maxHp = 20;
+    target.enemyAwareness = null;
+    const originalPosition = { x: crew.x, y: crew.y };
+
+    waitTurn(state);
+
+    expect(crew).not.toMatchObject(originalPosition);
+    expect(target.hp).toBe(20);
   });
 
   it("has powder-shy crew brace after audible hostile gunfire without repeated lockout", () => {
@@ -1819,6 +2195,62 @@ describe("game simulation", () => {
     expect(player.hp).toBe(player.maxHp);
   });
 
+  it("has slain bonegunners deterministically drop an unloaded flintlock and possible shot", () => {
+    const first = createGame(captain, "bonegunner-loot");
+    const second = createGame(captain, "bonegunner-loot");
+    const defeatGunner = (state: ReturnType<typeof createGame>) => {
+      const player = getCaptain(state);
+      const gunner = state.actors.find((actor) => actor.enemyType === "bonegunner" && actor.level === "surface");
+      if (!gunner) return [];
+      state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== gunner.id).forEach((actor) => {
+        actor.alive = false;
+      });
+      state.pickups.forEach((pickup) => { pickup.collected = true; });
+      for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+      player.x = 20;
+      player.y = 20;
+      gunner.x = 21;
+      gunner.y = 20;
+      gunner.hp = 1;
+      gunner.enemyAttribute = null;
+      gunner.enemyAwareness = null;
+      moveCaptain(state, 1, 0);
+      return state.pickups.filter(
+        (pickup) => !pickup.collected && pickup.x === gunner.x && pickup.y === gunner.y,
+      );
+    };
+
+    const firstDrops = defeatGunner(first);
+    const secondDrops = defeatGunner(second);
+
+    expect(firstDrops).toEqual(secondDrops);
+    expect(firstDrops).toContainEqual(expect.objectContaining({ type: "flintlock", loaded: false }));
+    expect(first.messages.some((message) => message.includes("drops a weathered flintlock"))).toBe(true);
+  });
+
+  it("leaves no loot behind when a volatile slag bursts", () => {
+    const state = createGame(captain, "slag-destroys-loot");
+    const player = getCaptain(state);
+    const slag = state.actors.find((actor) => actor.enemyType === "slag" && actor.level === "surface");
+    expect(slag).toBeDefined();
+    if (!slag) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== slag.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    state.pickups.forEach((pickup) => { pickup.collected = true; });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    slag.x = 21;
+    slag.y = 20;
+    slag.hp = 1;
+    slag.enemyAwareness = null;
+
+    moveCaptain(state, 1, 0);
+
+    expect(state.pickups.filter((pickup) => !pickup.collected)).toEqual([]);
+  });
+
   it("makes slain slags damage every adjacent actor", () => {
     const state = createGame(captain, "slag-burst");
     const player = getCaptain(state);
@@ -2003,11 +2435,14 @@ describe("game simulation", () => {
   it("warns before deterministic rain and does not perturb simulation RNG", () => {
     const state = createGame(captain, "weather-schedule");
     state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
-    const rngState = state.rngState;
     const warningTurn = state.surfaceWeather.transitionTurn;
     expect(warningTurn).toBeGreaterThanOrEqual(45);
     expect(warningTurn).toBeLessThanOrEqual(64);
-    for (let turn = 0; turn < warningTurn; turn += 1) waitTurn(state);
+    for (let turn = 0; turn < warningTurn - 1; turn += 1) waitTurn(state);
+    state.threat = 0;
+    state.lastEscalationTurn = state.turn;
+    const rngState = state.rngState;
+    waitTurn(state);
 
     expect(state.surfaceWeather.phase).toBe("squallWarning");
     expect(state.surfaceWeather.transitionTurn).toBe(warningTurn + 3);
@@ -2077,8 +2512,8 @@ describe("game simulation", () => {
 
     expect(fireFlintlock(state)).toBe(false);
     expect(state.turn).toBe(0);
-    expect(state.inventory.loaded).toBe(true);
-    state.inventory.loaded = false;
+    expect(player.rangedLoaded).toBe(true);
+    player.rangedLoaded = false;
     expect(reloadFlintlock(state)).toBe(false);
     expect(state.turn).toBe(0);
     expect(state.inventory.ammo).toBe(6);

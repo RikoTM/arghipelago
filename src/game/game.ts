@@ -3,6 +3,7 @@ import type {
   Actor,
   CaptainConfig,
   CrewOrder,
+  CrewStance,
   CrewTrait,
   EnemyAttribute,
   EnemyType,
@@ -11,9 +12,11 @@ import type {
   GameState,
   LevelId,
   MapLevel,
+  MeleeWeapon,
   Pickup,
   PickupType,
   Point,
+  RangedWeapon,
   RepairPart,
   Terrain,
   WeatherPhase,
@@ -40,6 +43,13 @@ const FIRE_DAMAGE = 2;
 const MUZZLE_SMOKE_TURNS = 3;
 const RAIN_WET_TURNS = 2;
 const SURF_WET_TURNS = 4;
+const ATTENTION_ESCALATION_THRESHOLD = 10;
+const ESCALATION_COOLDOWN_TURNS = 12;
+const BASE_ESCALATION_INTERVAL = 60;
+const MIN_ESCALATION_INTERVAL = 35;
+const WAIT_ATTENTION = 2;
+const REPAIR_RECOVERY_ATTENTION = 6;
+const REPAIR_INSTALL_ATTENTION = 4;
 
 type SoundKind = "gunfire" | "slagBurst" | "command" | "distraction" | "fireSpread";
 
@@ -82,12 +92,29 @@ const PICKUP_NAMES: Record<PickupType, string> = {
   ...REPAIR_NAMES,
   ammo: "a pouch of dry powder and shot",
   salts: "a bottle of extremely motivational smelling salts",
+  flintlock: "a weathered flintlock",
+  pistol: "a compact boarding pistol",
+  cutlass: "a serviceable cutlass",
+  knife: "a sharp rigging knife",
+  boardingAxe: "a heavy boarding axe",
 };
 
-const CREW: Array<{ name: string; role: string; melee: number }> = [
-  { name: "Peg-Less Pete", role: "Carpenter, despite the name", melee: 2 },
-  { name: "Dr. Marrow", role: "Surgeon and amateur anatomist", melee: 1 },
-  { name: "Anne Teak", role: "Gunner, furniture enthusiast", melee: 2 },
+const MELEE_WEAPON_DAMAGE: Record<MeleeWeapon, number> = {
+  knife: 0,
+  cutlass: 1,
+  boardingAxe: 2,
+};
+
+const CREW: Array<{
+  name: string;
+  role: string;
+  melee: number;
+  meleeWeapon: MeleeWeapon;
+  rangedWeapon: RangedWeapon | null;
+}> = [
+  { name: "Peg-Less Pete", role: "Carpenter, despite the name", melee: 1, meleeWeapon: "cutlass", rangedWeapon: null },
+  { name: "Dr. Marrow", role: "Surgeon and amateur anatomist", melee: 1, meleeWeapon: "knife", rangedWeapon: null },
+  { name: "Anne Teak", role: "Gunner, furniture enthusiast", melee: 1, meleeWeapon: "cutlass", rangedWeapon: "pistol" },
 ];
 
 const ENEMY_NAMES: Record<EnemyType, string[]> = {
@@ -349,6 +376,10 @@ function makeEnemy(id: number, type: EnemyType, point: Point, rng: Rng, level: L
     enemyAttribute: null,
     crewTrait: null,
     crewAssignment: null,
+    crewStance: null,
+    meleeWeapon: null,
+    rangedWeapon: null,
+    rangedLoaded: false,
     crewReaction: null,
     reactionCooldownUntilTurn: 0,
     stabilized: false,
@@ -437,6 +468,10 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       enemyAttribute: null,
       crewTrait: null,
       crewAssignment: null,
+      crewStance: null,
+      meleeWeapon: "cutlass",
+      rangedWeapon: "flintlock",
+      rangedLoaded: true,
       crewReaction: null,
       reactionCooldownUntilTurn: 0,
       stabilized: false,
@@ -445,7 +480,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       y: island.wreck.y,
       hp: 16 + privateerHealth,
       maxHp: 16 + privateerHealth,
-      melee: 2,
+      melee: 1,
       alive: true,
       incapacitatedTurns: 0,
       wetUntilTurn: 0,
@@ -464,6 +499,10 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       enemyAttribute: null,
       crewTrait: null,
       crewAssignment: null,
+      crewStance: "close",
+      meleeWeapon: recruit.meleeWeapon,
+      rangedWeapon: recruit.rangedWeapon,
+      rangedLoaded: recruit.rangedWeapon !== null,
       crewReaction: null,
       reactionCooldownUntilTurn: 0,
       stabilized: false,
@@ -482,11 +521,19 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
     nextId += 1;
   }
 
-  const pickupTypes: PickupType[] = ["mast", "canvas", "ammo", "ammo", "salts"];
+  const pickupTypes: PickupType[] = ["mast", "canvas", "ammo", "ammo", "salts", "pistol", "boardingAxe"];
   for (const [index, type] of pickupTypes.entries()) {
     const minimumDistance = index < 2 ? 13 + index * 2 : 7;
     const point = takePlacement(pool, rng, (candidate) => distance(candidate, island.wreck) > minimumDistance);
-    pickups.push({ id: nextId, level: "surface", type, x: point.x, y: point.y, collected: false });
+    pickups.push({
+      id: nextId,
+      level: "surface",
+      type,
+      x: point.x,
+      y: point.y,
+      collected: false,
+      loaded: type === "pistol" || type === "flintlock",
+    });
     nextId += 1;
   }
 
@@ -513,11 +560,11 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
 
   const cavePool = cave.reachable.filter((point) => distance(point, cave.exit) > 3);
   const pitchPoint = takePlacement(cavePool, rng, (point) => distance(point, cave.exit) > 16);
-  pickups.push({ id: nextId, level: "cave", type: "pitch", x: pitchPoint.x, y: pitchPoint.y, collected: false });
+  pickups.push({ id: nextId, level: "cave", type: "pitch", x: pitchPoint.x, y: pitchPoint.y, collected: false, loaded: false });
   nextId += 1;
   for (const type of ["ammo", "salts"] as const) {
     const point = takePlacement(cavePool, rng, (candidate) => distance(candidate, cave.exit) > 7);
-    pickups.push({ id: nextId, level: "cave", type, x: point.x, y: point.y, collected: false });
+    pickups.push({ id: nextId, level: "cave", type, x: point.x, y: point.y, collected: false, loaded: false });
     nextId += 1;
   }
   for (const type of ["skeleton", "skeleton", "slag", "slag", "bonegunner", "skeleton"] as const) {
@@ -529,7 +576,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
   assignCrewTraits(seed, actors);
 
   const state: GameState = {
-    version: 13,
+    version: 18,
     seed,
     rngState: rng.state,
     levels: {
@@ -548,13 +595,15 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
     turn: 0,
     threat: 0,
     dangerLevel: 0,
+    lastEscalationTurn: 0,
     surfaceWeather: {
       phase: "fair",
       transitionTurn: 45 + new Rng(`${seed}:weather:0:fair`).int(20),
       cycle: 0,
     },
     lastCrewOrder: "follow",
-    inventory: { loaded: true, ammo: 6, salts: config.background === "surgeon" ? 2 : 1 },
+    lastCrewStance: "close",
+    inventory: { ammo: 6, salts: config.background === "surgeon" ? 2 : 1 },
     recoveredParts: { mast: false, canvas: false, pitch: false },
     repairs: { mast: false, canvas: false, pitch: false },
     captainConfig: config,
@@ -657,6 +706,47 @@ function igniteFromSlag(state: GameState, slag: Actor): void {
   if (ignition) addEnvironment(state, slag.level, ignition, FIRE_TURNS, smokeTurns);
 }
 
+function nextEntityId(state: GameState): number {
+  return Math.max(...state.actors.map((actor) => actor.id), ...state.pickups.map((pickup) => pickup.id)) + 1;
+}
+
+function addGroundPickup(
+  state: GameState,
+  level: LevelId,
+  point: Point,
+  type: PickupType,
+  loaded = false,
+): Pickup {
+  const pickup: Pickup = {
+    id: nextEntityId(state),
+    level,
+    type,
+    x: point.x,
+    y: point.y,
+    collected: false,
+    loaded,
+  };
+  state.pickups.push(pickup);
+  return pickup;
+}
+
+function dropEnemyLoot(state: GameState, enemy: Actor): void {
+  if (!enemy.enemyType || enemy.enemyType === "slag") return;
+  const rng = new Rng(`${state.seed}:enemy-loot:v1:${enemy.id}:${enemy.enemyType}`);
+  const drops: PickupType[] = [];
+  if (enemy.enemyType === "bonegunner") {
+    drops.push("flintlock");
+    if (rng.chance(0.5)) drops.push("ammo");
+  } else if (enemy.enemyType === "skeleton" && rng.chance(0.35)) {
+    drops.push(rng.chance(0.5) ? "knife" : "cutlass");
+  } else if (enemy.enemyType === "crab" && rng.chance(0.25)) {
+    drops.push("salts");
+  }
+  if (drops.length === 0) return;
+  for (const type of drops) addGroundPickup(state, enemy.level, enemy, type);
+  addMessage(state, `${enemy.name} drops ${drops.map((type) => PICKUP_NAMES[type]).join(" and ")}.`);
+}
+
 function damageActor(
   state: GameState,
   target: Actor,
@@ -693,6 +783,7 @@ function damageActor(
   } else {
     addMessage(state, `${target.name} is killed.`);
     if (target.id === state.targetId) state.targetId = null;
+    if (target.kind === "enemy") dropEnemyLoot(state, target);
     if (target.kind === "enemy" && target.enemyType === "slag") {
       addMessage(state, `${target.name} bursts in a ring of furnace-hot embers.`);
       sounds.push(makeSound("slagBurst", target));
@@ -740,7 +831,8 @@ function hasFlankingAlly(state: GameState, attacker: Actor, target: Actor): bool
 }
 
 function meleeAttack(state: GameState, attacker: Actor, target: Actor, rng: Rng, sounds: SoundEvent[]): void {
-  const base = attacker.melee + rng.int(2);
+  const weaponDamage = attacker.meleeWeapon ? MELEE_WEAPON_DAMAGE[attacker.meleeWeapon] : 0;
+  const base = attacker.melee + weaponDamage + rng.int(2);
   const duelistBonus = attacker.kind === "captain" && state.captainConfig.knack === "duelist" ? 1 : 0;
   const luckyBonus = attacker.kind === "captain" && state.captainConfig.knack === "lucky" && rng.chance(0.25) ? 1 : 0;
   const flankingBonus = hasFlankingAlly(state, attacker, target) ? 1 : 0;
@@ -759,6 +851,14 @@ function meleeAttack(state: GameState, attacker: Actor, target: Actor, rng: Rng,
   }
 }
 
+function isRangedWeaponPickup(type: PickupType): type is RangedWeapon {
+  return type === "flintlock" || type === "pistol";
+}
+
+function isMeleeWeaponPickup(type: PickupType): type is MeleeWeapon {
+  return type === "cutlass" || type === "knife" || type === "boardingAxe";
+}
+
 function collectAtCaptain(state: GameState): void {
   const player = captain(state);
   for (const pickup of state.pickups) {
@@ -768,10 +868,14 @@ function collectAtCaptain(state: GameState): void {
       pickup.x !== player.x ||
       pickup.y !== player.y
     ) continue;
+    if (isRangedWeaponPickup(pickup.type) || isMeleeWeaponPickup(pickup.type)) continue;
     pickup.collected = true;
     if (pickup.type === "ammo") state.inventory.ammo += 4;
     else if (pickup.type === "salts") state.inventory.salts += 1;
-    else state.recoveredParts[pickup.type] = true;
+    else {
+      state.recoveredParts[pickup.type] = true;
+      state.threat += REPAIR_RECOVERY_ATTENTION;
+    }
     addMessage(state, `You recover ${PICKUP_NAMES[pickup.type]}.`);
   }
 }
@@ -912,12 +1016,99 @@ function aidCrew(state: GameState, crew: Actor, order: CrewOrder): boolean {
   return true;
 }
 
+function isCrewGunner(actor: Actor): boolean {
+  return actor.kind === "crew" && Boolean(actor.role?.startsWith("Gunner"));
+}
+
+function isArmedCrew(actor: Actor): boolean {
+  return actor.kind === "crew" && actor.rangedWeapon !== null;
+}
+
+function rangedWeaponName(weapon: RangedWeapon): string {
+  return weapon === "flintlock" ? "flintlock" : "pistol";
+}
+
+function meleeWeaponName(weapon: MeleeWeapon): string {
+  return weapon === "boardingAxe" ? "boarding axe" : weapon;
+}
+
+function nonHostileActorInLineOfFire(state: GameState, shooter: Actor, target: Actor): Actor | null {
+  const line = lineBetween(shooter, target).slice(1, -1);
+  return state.actors.find(
+    (actor) =>
+      actor.id !== shooter.id &&
+      actor.alive &&
+      actor.level === shooter.level &&
+      !areActorsHostile(shooter, actor) &&
+      line.some((point) => point.x === actor.x && point.y === actor.y),
+  ) ?? null;
+}
+
+function useCrewFirearm(
+  state: GameState,
+  crew: Actor,
+  target: Actor,
+  rng: Rng,
+  sounds: SoundEvent[],
+): boolean {
+  if (!isArmedCrew(crew) || !crew.rangedWeapon) return false;
+  const weapon = rangedWeaponName(crew.rangedWeapon);
+  if (distance(crew, target) <= 1) {
+    const retreat = bestStepAway(state, crew, target);
+    if (!retreat) return false;
+    tryMoveActor(state, crew, retreat.x, retreat.y);
+    addMessage(state, `${crew.name} backs away to make room for a shot.`);
+    return true;
+  }
+  if (!crew.rangedLoaded) {
+    if (isWet(state, crew)) {
+      addMessage(state, `${crew.name}'s powder is too damp to reload.`);
+      return true;
+    }
+    if (state.inventory.ammo <= 0) {
+      addMessage(state, `${crew.name} has an empty ${weapon} and no shot to reload it.`);
+      return true;
+    }
+    state.inventory.ammo -= 1;
+    crew.rangedLoaded = true;
+    addMessage(state, `${crew.name} reloads a ${weapon} from the party's shot supply.`);
+    return true;
+  }
+  if (distance(crew, target) > 6 || !canSeeActor(state, crew, target)) return false;
+  const interveningActor = nonHostileActorInLineOfFire(state, crew, target);
+  if (interveningActor) {
+    addMessage(state, `${crew.name} holds fire with ${interveningActor.name} in the way.`);
+    return true;
+  }
+  if (isWet(state, crew)) {
+    addMessage(state, `${crew.name}'s ${weapon} is too damp to use.`);
+    return true;
+  }
+
+  crew.rangedLoaded = false;
+  sounds.push(makeSound("gunfire", crew));
+  addMuzzleSmoke(state, crew);
+  addMessage(state, `${crew.name} fires a ${weapon} at ${target.name}.`);
+  const accuracy = isCrewGunner(crew) ? 0.85 : 0.68;
+  if (rng.chance(accuracy)) {
+    const rolledDamage = 3 + rng.int(3);
+    const armoredDamage = target.enemyAttribute === "ironclad" ? Math.max(1, rolledDamage - 2) : rolledDamage;
+    if (target.enemyAttribute === "ironclad") addMessage(state, `${target.name}'s iron plating absorbs part of the shot.`);
+    const damage = projectileDamage(state, target, armoredDamage);
+    damageActor(state, target, damage, { actor: crew, label: crew.name }, sounds);
+  } else {
+    addMessage(state, `${crew.name} fires wide of ${target.name}.`);
+  }
+  return true;
+}
+
 function runCrewTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
   const player = captain(state);
   for (const crew of state.actors.filter(
     (actor) => canAct(actor) && actor.level === state.currentLevel && actor.kind === "crew",
   )) {
     const assignment = crew.crewAssignment ?? { order: "follow" as const, targetId: null };
+    const stance = crew.crewStance ?? "close";
     let order = assignment.order;
     let orderedTarget = order === "attack"
       ? state.actors.find(
@@ -949,9 +1140,19 @@ function runCrewTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
     }
     if (aidCrew(state, crew, order)) continue;
     if (orderedTarget?.alive) {
+      if (stance === "ranged" && useCrewFirearm(state, crew, orderedTarget, rng, sounds)) {
+        if (!orderedTarget.alive) {
+          crew.crewAssignment = { order: "follow", targetId: null };
+          addMessage(state, `${orderedTarget.name} is down. ${crew.name} resumes following.`);
+        }
+        continue;
+      }
       if (distance(crew, orderedTarget) <= 1) meleeAttack(state, crew, orderedTarget, rng, sounds);
       else {
-        const step = bestStepToward(state, crew, orderedTarget);
+        const desiredDistance = stance === "ranged" && isArmedCrew(crew) && canSeeActor(state, crew, orderedTarget)
+          ? 5
+          : 1;
+        const step = bestStepToward(state, crew, orderedTarget, desiredDistance);
         if (step) tryMoveActor(state, crew, step.x, step.y);
       }
       if (!orderedTarget.alive) {
@@ -965,6 +1166,11 @@ function runCrewTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
         actor.alive && actor.level === state.currentLevel && actor.kind === "enemy" && distance(crew, actor) <= 1,
     );
     if (adjacentEnemy && order !== "rally") {
+      if (stance === "avoid" || stance === "ranged" && isArmedCrew(crew)) {
+        const retreat = bestStepAway(state, crew, adjacentEnemy);
+        if (retreat) tryMoveActor(state, crew, retreat.x, retreat.y);
+        continue;
+      }
       meleeAttack(state, crew, adjacentEnemy, rng, sounds);
       continue;
     }
@@ -1054,8 +1260,8 @@ function triggerCrewReactions(state: GameState, sound: SoundEvent): void {
       crew.reactionCooldownUntilTurn > state.turn ||
       !soundReaches(state, sound, crew)
     ) continue;
-    const friendlyCaptainShot = sound.kind === "gunfire" && source?.kind === "captain" && crew.role?.startsWith("Gunner");
-    if (friendlyCaptainShot) continue;
+    const trainedForFriendlyFire = sound.kind === "gunfire" && source && getFaction(source) === "party" && isCrewGunner(crew);
+    if (trainedForFriendlyFire) continue;
     crew.crewReaction = "brace";
     addMessage(state, `${crew.name} braces at the ${sound.kind === "slagBurst" ? "slag's blast" : "gunshot"}.`);
   }
@@ -1209,14 +1415,12 @@ function runEnemyTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
 }
 
 function spawnEscalation(state: GameState, rng: Rng): void {
-  if (state.turn === 0 || state.turn % 60 !== 0) return;
-  state.dangerLevel += 1;
-  addMessage(
-    state,
-    state.currentLevel === "cave"
-      ? "Something deeper in the cave has noticed how long this is taking."
-      : "Something in the jungle has noticed how long this is taking.",
-  );
+  const turnsSinceEscalation = state.turn - state.lastEscalationTurn;
+  const interval = Math.max(MIN_ESCALATION_INTERVAL, BASE_ESCALATION_INTERVAL - state.dangerLevel * 5);
+  const attentionTriggered =
+    state.threat >= ATTENTION_ESCALATION_THRESHOLD && turnsSinceEscalation >= ESCALATION_COOLDOWN_TURNS;
+  const timeTriggered = turnsSinceEscalation >= interval;
+  if (!attentionTriggered && !timeTriggered) return;
   const player = captain(state);
   const map = currentMap(state);
   const candidates: Point[] = [];
@@ -1236,11 +1440,24 @@ function spawnEscalation(state: GameState, rng: Rng): void {
   }
   const point = candidates[rng.int(candidates.length)];
   if (!point) return;
+  state.dangerLevel += 1;
+  state.lastEscalationTurn = state.turn;
+  if (attentionTriggered) state.threat = Math.max(0, state.threat - ATTENTION_ESCALATION_THRESHOLD);
+  addMessage(
+    state,
+    attentionTriggered
+      ? state.currentLevel === "cave"
+        ? "Your recent racket draws something from deeper in the cave."
+        : "Your recent activity draws an unwelcome answer from the jungle."
+      : state.currentLevel === "cave"
+        ? "Something deeper in the cave has noticed how long this is taking."
+        : "Something in the jungle has noticed how long this is taking.",
+  );
   const types: EnemyType[] = state.currentLevel === "cave"
     ? ["skeleton", "slag", "bonegunner"]
     : ["skeleton", "crab", "slag", "bonegunner"];
   const type = types[rng.int(types.length)] ?? "skeleton";
-  const nextId = Math.max(...state.actors.map((actor) => actor.id), ...state.pickups.map((pickup) => pickup.id)) + 1;
+  const nextId = nextEntityId(state);
   const enemy = makeEnemy(nextId, type, point, rng, state.currentLevel);
   const specialRng = new Rng(`${state.seed}:special:${state.currentLevel}:${state.dangerLevel}:${enemy.id}`);
   if (specialRng.int(8) === 0) assignEnemyAttribute(enemy, specialRng);
@@ -1346,16 +1563,23 @@ export function moveCaptain(state: GameState, dx: number, dy: number): boolean {
 export function waitTurn(state: GameState): void {
   if (state.phase !== "playing") return;
   addMessage(state, "You wait with professional intensity.");
+  state.threat += WAIT_ATTENTION;
   finishTurn(state);
 }
 
 export function reloadFlintlock(state: GameState): boolean {
   if (state.phase !== "playing") return false;
-  if (state.inventory.loaded) {
-    addMessage(state, "The flintlock is already loaded. Overachieving here would be unwise.");
+  const player = captain(state);
+  if (!player.rangedWeapon) {
+    addMessage(state, "The captain has no firearm to reload. Check whichever crewmate looked trustworthy.");
     return false;
   }
-  if (isWet(state, captain(state))) {
+  const weapon = rangedWeaponName(player.rangedWeapon);
+  if (player.rangedLoaded) {
+    addMessage(state, `The ${weapon} is already loaded. Overachieving here would be unwise.`);
+    return false;
+  }
+  if (isWet(state, player)) {
     addMessage(state, "The captain's powder and hands are too wet to reload safely.");
     return false;
   }
@@ -1364,8 +1588,212 @@ export function reloadFlintlock(state: GameState): boolean {
     return false;
   }
   state.inventory.ammo -= 1;
-  state.inventory.loaded = true;
-  addMessage(state, "You reload the flintlock. Nothing explodes prematurely.");
+  player.rangedLoaded = true;
+  addMessage(state, `You reload the ${weapon}. Nothing explodes prematurely.`);
+  finishTurn(state);
+  return true;
+}
+
+function nearbyCrewForEquipment(state: GameState): Actor[] {
+  const player = captain(state);
+  return state.actors
+    .filter(
+      (actor) => actor.kind === "crew" && actor.level === state.currentLevel && distance(player, actor) <= 1,
+    )
+    .sort((a, b) => a.id - b.id);
+}
+
+export function getFirearmTransferLabel(state: GameState): string {
+  const player = captain(state);
+  const nearbyCrew = nearbyCrewForEquipment(state);
+  if (player.rangedWeapon) {
+    const recipient = nearbyCrew.find((actor) => canAct(actor) && actor.rangedWeapon === null);
+    return recipient ? `Pass ${rangedWeaponName(player.rangedWeapon)} to ${recipient.name}` : "No firearm trade";
+  }
+  const donor = nearbyCrew.find((actor) => actor.rangedWeapon !== null);
+  return donor?.rangedWeapon ? `Retrieve ${rangedWeaponName(donor.rangedWeapon)} from ${donor.name}` : "No firearm trade";
+}
+
+export function transferFirearm(state: GameState): boolean {
+  if (state.phase !== "playing") return false;
+  const player = captain(state);
+  const nearbyCrew = nearbyCrewForEquipment(state);
+
+  if (player.rangedWeapon) {
+    const recipient = nearbyCrew.find((actor) => canAct(actor) && actor.rangedWeapon === null);
+    if (!recipient) {
+      addMessage(state, "No adjacent active crewmate has a free hand for the captain's firearm.");
+      return false;
+    }
+    const weapon = player.rangedWeapon;
+    recipient.rangedWeapon = weapon;
+    recipient.rangedLoaded = player.rangedLoaded;
+    player.rangedWeapon = null;
+    player.rangedLoaded = false;
+    addMessage(state, `${player.name} passes the ${rangedWeaponName(weapon)} to ${recipient.name}.`);
+    finishTurn(state);
+    return true;
+  }
+
+  const donor = nearbyCrew.find((actor) => actor.rangedWeapon !== null);
+  if (!donor?.rangedWeapon) {
+    addMessage(state, "No adjacent crewmate has a firearm for the captain to retrieve.");
+    return false;
+  }
+  const weapon = donor.rangedWeapon;
+  player.rangedWeapon = weapon;
+  player.rangedLoaded = donor.rangedLoaded;
+  donor.rangedWeapon = null;
+  donor.rangedLoaded = false;
+  addMessage(
+    state,
+    donor.alive
+      ? `${donor.name} returns the ${rangedWeaponName(weapon)} to ${player.name}.`
+      : `${player.name} recovers the ${rangedWeaponName(weapon)} from ${donor.name}.`,
+  );
+  finishTurn(state);
+  return true;
+}
+
+function meleeTransferTarget(state: GameState): Actor | null {
+  const player = captain(state);
+  const nearbyCrew = nearbyCrewForEquipment(state);
+  if (!player.meleeWeapon) return nearbyCrew.find((actor) => actor.meleeWeapon !== null) ?? null;
+  const activeCrew = nearbyCrew.filter(canAct);
+  return activeCrew.find((actor) => actor.meleeWeapon === null) ??
+    activeCrew.find((actor) => actor.meleeWeapon !== player.meleeWeapon) ??
+    null;
+}
+
+export function getMeleeTransferLabel(state: GameState): string {
+  const player = captain(state);
+  const crew = meleeTransferTarget(state);
+  if (!crew) return "No blade trade";
+  if (!player.meleeWeapon) {
+    return crew.meleeWeapon ? `Retrieve ${meleeWeaponName(crew.meleeWeapon)} from ${crew.name}` : "No blade trade";
+  }
+  if (!crew.meleeWeapon) return `Pass ${meleeWeaponName(player.meleeWeapon)} to ${crew.name}`;
+  return `Swap for ${meleeWeaponName(crew.meleeWeapon)} with ${crew.name}`;
+}
+
+export function transferMeleeWeapon(state: GameState): boolean {
+  if (state.phase !== "playing") return false;
+  const player = captain(state);
+  const crew = meleeTransferTarget(state);
+  if (!crew) {
+    addMessage(state, "No adjacent crewmate has a useful melee weapon trade.");
+    return false;
+  }
+
+  if (!player.meleeWeapon) {
+    const weapon = crew.meleeWeapon;
+    if (!weapon) return false;
+    player.meleeWeapon = weapon;
+    crew.meleeWeapon = null;
+    addMessage(
+      state,
+      crew.alive
+        ? `${crew.name} hands the ${meleeWeaponName(weapon)} to ${player.name}.`
+        : `${player.name} recovers the ${meleeWeaponName(weapon)} from ${crew.name}.`,
+    );
+    finishTurn(state);
+    return true;
+  }
+
+  const captainWeapon = player.meleeWeapon;
+  const crewWeapon = crew.meleeWeapon;
+  crew.meleeWeapon = captainWeapon;
+  player.meleeWeapon = crewWeapon;
+  addMessage(
+    state,
+    crewWeapon
+      ? `${player.name} swaps the ${meleeWeaponName(captainWeapon)} for ${crew.name}'s ${meleeWeaponName(crewWeapon)}.`
+      : `${player.name} passes the ${meleeWeaponName(captainWeapon)} to ${crew.name}.`,
+  );
+  finishTurn(state);
+  return true;
+}
+
+function groundFirearmAtCaptain(state: GameState): Pickup | null {
+  const player = captain(state);
+  return state.pickups.find(
+    (pickup) =>
+      !pickup.collected &&
+      pickup.level === state.currentLevel &&
+      pickup.x === player.x &&
+      pickup.y === player.y &&
+      isRangedWeaponPickup(pickup.type),
+  ) ?? null;
+}
+
+function groundMeleeWeaponAtCaptain(state: GameState): Pickup | null {
+  const player = captain(state);
+  return state.pickups.find(
+    (pickup) =>
+      !pickup.collected &&
+      pickup.level === state.currentLevel &&
+      pickup.x === player.x &&
+      pickup.y === player.y &&
+      isMeleeWeaponPickup(pickup.type),
+  ) ?? null;
+}
+
+function groundEquipmentForCaptain(state: GameState): Pickup | null {
+  const player = captain(state);
+  const meleeWeapon = groundMeleeWeaponAtCaptain(state);
+  const firearm = groundFirearmAtCaptain(state);
+  if (!player.meleeWeapon && meleeWeapon) return meleeWeapon;
+  if (!player.rangedWeapon && firearm) return firearm;
+  return firearm ?? meleeWeapon;
+}
+
+export function dropFirearm(state: GameState): boolean {
+  if (state.phase !== "playing") return false;
+  const player = captain(state);
+  if (!player.rangedWeapon) {
+    addMessage(state, "The captain has no firearm to drop.");
+    return false;
+  }
+  if (groundFirearmAtCaptain(state)) {
+    addMessage(state, "There is already a firearm here. Even pirates should avoid that sort of pile.");
+    return false;
+  }
+  const map = currentMap(state);
+  const terrain = map.tiles[tileIndex(player.x, player.y, map.width)]?.terrain;
+  if (terrain === "stairsDown" || terrain === "stairsUp") {
+    addMessage(state, "Dropping a firearm on the stairs would make both navigation and dignity hazardous.");
+    return false;
+  }
+  const weapon = player.rangedWeapon;
+  addGroundPickup(state, state.currentLevel, player, weapon, player.rangedLoaded);
+  player.rangedWeapon = null;
+  player.rangedLoaded = false;
+  addMessage(state, `${player.name} leaves the ${rangedWeaponName(weapon)} on the ground.`);
+  finishTurn(state);
+  return true;
+}
+
+export function dropMeleeWeapon(state: GameState): boolean {
+  if (state.phase !== "playing") return false;
+  const player = captain(state);
+  if (!player.meleeWeapon) {
+    addMessage(state, "The captain has no melee weapon to drop.");
+    return false;
+  }
+  if (groundMeleeWeaponAtCaptain(state)) {
+    addMessage(state, "There is already a melee weapon here. The island needs fewer blade piles.");
+    return false;
+  }
+  const map = currentMap(state);
+  const terrain = map.tiles[tileIndex(player.x, player.y, map.width)]?.terrain;
+  if (terrain === "stairsDown" || terrain === "stairsUp") {
+    addMessage(state, "Leaving a blade on the stairs would violate several practical traditions.");
+    return false;
+  }
+  const weapon = player.meleeWeapon;
+  addGroundPickup(state, state.currentLevel, player, weapon);
+  player.meleeWeapon = null;
+  addMessage(state, `${player.name} leaves the ${meleeWeaponName(weapon)} on the ground.`);
   finishTurn(state);
   return true;
 }
@@ -1442,8 +1870,13 @@ export function cycleTarget(state: GameState): Actor | null {
 export function fireFlintlock(state: GameState): boolean {
   if (state.phase !== "playing") return false;
   const player = captain(state);
+  if (!player.rangedWeapon) {
+    addMessage(state, "The captain has no firearm. Retrieve one from an adjacent crewmate.");
+    return false;
+  }
+  const weapon = rangedWeaponName(player.rangedWeapon);
   if (isWet(state, player)) {
-    addMessage(state, "The flintlock is too damp to fire. Find shelter and let the powder dry.");
+    addMessage(state, `The ${weapon} is too damp to fire. Find shelter and let the powder dry.`);
     return false;
   }
   let target = state.actors.find(
@@ -1459,24 +1892,21 @@ export function fireFlintlock(state: GameState): boolean {
     addMessage(state, "No clear target presents itself.");
     return false;
   }
-  if (!state.inventory.loaded) {
-    addMessage(state, "The flintlock clicks with devastating sarcasm. Reload it.");
+  if (!player.rangedLoaded) {
+    addMessage(state, `The ${weapon} clicks with devastating sarcasm. Reload it.`);
     return false;
   }
 
-  const interveningCrew = state.actors.find((actor) => {
-    if (!canAct(actor) || actor.level !== state.currentLevel || actor.kind !== "crew") return false;
-    return lineBetween(player, target as Actor).slice(1, -1).some((point) => point.x === actor.x && point.y === actor.y);
-  });
-  if (interveningCrew) {
-    addMessage(state, `${interveningCrew.name} is in the line of fire and would prefer not to be.`);
+  const interveningActor = nonHostileActorInLineOfFire(state, player, target);
+  if (interveningActor) {
+    addMessage(state, `${interveningActor.name} is in the line of fire and would prefer not to be.`);
     return false;
   }
 
   const rng = new Rng(state.rngState);
   const sounds = [makeSound("gunfire", player)];
   addMuzzleSmoke(state, player);
-  state.inventory.loaded = false;
+  player.rangedLoaded = false;
   const accuracy = state.captainConfig.knack === "deadeye" ? 0.95 : state.captainConfig.knack === "lucky" ? 0.85 : 0.78;
   if (rng.chance(accuracy)) {
     const rolledDamage = 5 + rng.int(3);
@@ -1495,6 +1925,10 @@ export function fireFlintlock(state: GameState): boolean {
 export function firePitchShot(state: GameState): boolean {
   if (state.phase !== "playing") return false;
   const player = captain(state);
+  if (!player.rangedWeapon) {
+    addMessage(state, "The captain needs a firearm before attempting incendiary ammunition.");
+    return false;
+  }
   if (isWet(state, player)) {
     addMessage(state, "Wet powder refuses to launch even an exceptionally flammable idea.");
     return false;
@@ -1515,21 +1949,18 @@ export function firePitchShot(state: GameState): boolean {
     addMessage(state, "No clear target is close enough for a pitch-soaked shot.");
     return false;
   }
-  if (!state.inventory.loaded) {
-    addMessage(state, "The flintlock must be loaded before adding inadvisable amounts of pitch.");
+  if (!player.rangedLoaded) {
+    addMessage(state, `The ${rangedWeaponName(player.rangedWeapon)} must be loaded before adding inadvisable amounts of pitch.`);
     return false;
   }
-  const interveningCrew = state.actors.find((actor) => {
-    if (!canAct(actor) || actor.level !== state.currentLevel || actor.kind !== "crew") return false;
-    return lineBetween(player, target).slice(1, -1).some((point) => point.x === actor.x && point.y === actor.y);
-  });
-  if (interveningCrew) {
-    addMessage(state, `${interveningCrew.name} objects strongly to being between the captain and a burning projectile.`);
+  const interveningActor = nonHostileActorInLineOfFire(state, player, target);
+  if (interveningActor) {
+    addMessage(state, `${interveningActor.name} objects strongly to being between the captain and a burning projectile.`);
     return false;
   }
 
   const sounds = [makeSound("gunfire", player)];
-  state.inventory.loaded = false;
+  player.rangedLoaded = false;
   addMuzzleSmoke(state, player);
   const damage = projectileDamage(state, target, 2);
   damageActor(state, target, damage, { actor: player, label: `${player.name}'s pitch shot` }, sounds);
@@ -1545,6 +1976,7 @@ export function firePitchShot(state: GameState): boolean {
 }
 
 const ORDER_SEQUENCE: CrewOrder[] = ["follow", "hold", "rally"];
+const STANCE_SEQUENCE: CrewStance[] = ["close", "ranged", "avoid"];
 
 function commandRecipients(state: GameState, sound: SoundEvent): Actor[] {
   return state.actors.filter(
@@ -1573,6 +2005,29 @@ export function cycleCrewOrder(state: GameState): CrewOrder {
   addMessage(state, `Crew order: ${order}. ${recipients.length} of ${crewCount} crewmates hear it.`);
   finishTurn(state, [sound]);
   return order;
+}
+
+export function cycleCrewStance(state: GameState): CrewStance {
+  const crewCount = state.actors.filter(
+    (actor) => canAct(actor) && actor.level === state.currentLevel && actor.kind === "crew",
+  ).length;
+  if (crewCount === 0) {
+    addMessage(state, "You announce a tactical stance to an audience of palm trees.");
+    return state.lastCrewStance;
+  }
+  const index = STANCE_SEQUENCE.indexOf(state.lastCrewStance);
+  const stance = STANCE_SEQUENCE[(index + 1) % STANCE_SEQUENCE.length] ?? "close";
+  const sound = makeSound("command", captain(state));
+  const recipients = commandRecipients(state, sound);
+  for (const crew of recipients) crew.crewStance = stance;
+  state.lastCrewStance = stance;
+  const armedCount = recipients.filter(isArmedCrew).length;
+  const detail = stance === "ranged"
+    ? ` ${armedCount} armed crewmate${armedCount === 1 ? "" : "s"} ready ${armedCount === 1 ? "a firearm" : "their firearms"}.`
+    : "";
+  addMessage(state, `Crew stance: ${stance}. ${recipients.length} of ${crewCount} crewmates hear it.${detail}`);
+  finishTurn(state, [sound]);
+  return stance;
 }
 
 export function commandCrewAttack(state: GameState): boolean {
@@ -1699,6 +2154,13 @@ export function getInteractionLabel(state: GameState): string {
   const terrain = map.tiles[tileIndex(player.x, player.y, map.width)]?.terrain;
   if (terrain === "stairsDown") return "Descend cave";
   if (terrain === "stairsUp") return "Climb outside";
+  const groundEquipment = groundEquipmentForCaptain(state);
+  if (groundEquipment && isRangedWeaponPickup(groundEquipment.type)) {
+    return `Pick up ${rangedWeaponName(groundEquipment.type)}`;
+  }
+  if (groundEquipment && isMeleeWeaponPickup(groundEquipment.type)) {
+    return `Pick up ${meleeWeaponName(groundEquipment.type)}`;
+  }
   if (isAtWreck(state)) {
     const part = nextRecoveredRepair(state);
     return part ? `Fit ${REPAIR_LABELS[part]}` : "Inspect wreck";
@@ -1713,6 +2175,30 @@ export function interact(state: GameState): boolean {
   const map = currentMap(state);
   const terrain = map.tiles[tileIndex(player.x, player.y, map.width)]?.terrain;
   if (terrain === "stairsDown" || terrain === "stairsUp") return useStairs(state);
+  const groundEquipment = groundEquipmentForCaptain(state);
+  if (groundEquipment && isRangedWeaponPickup(groundEquipment.type)) {
+    if (player.rangedWeapon) {
+      addMessage(state, `Drop or pass the captain's ${rangedWeaponName(player.rangedWeapon)} before picking up another firearm.`);
+      return false;
+    }
+    player.rangedWeapon = groundEquipment.type;
+    player.rangedLoaded = groundEquipment.loaded;
+    groundEquipment.collected = true;
+    addMessage(state, `${player.name} picks up ${PICKUP_NAMES[groundEquipment.type]}.`);
+    finishTurn(state);
+    return true;
+  }
+  if (groundEquipment && isMeleeWeaponPickup(groundEquipment.type)) {
+    if (player.meleeWeapon) {
+      addMessage(state, `Drop the captain's ${meleeWeaponName(player.meleeWeapon)} before picking up another melee weapon.`);
+      return false;
+    }
+    player.meleeWeapon = groundEquipment.type;
+    groundEquipment.collected = true;
+    addMessage(state, `${player.name} picks up ${PICKUP_NAMES[groundEquipment.type]}.`);
+    finishTurn(state);
+    return true;
+  }
   if (isAtSurf(state)) {
     douseParty(state);
     return true;
@@ -1729,6 +2215,7 @@ export function interact(state: GameState): boolean {
   }
 
   state.repairs[part] = true;
+  state.threat += REPAIR_INSTALL_ATTENTION;
   addMessage(state, `You fit the ${REPAIR_LABELS[part]}. The ship looks incrementally less doomed.`);
   finishTurn(state);
   if (state.phase === "playing" && REPAIR_SEQUENCE.every((repair) => state.repairs[repair])) {

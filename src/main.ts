@@ -7,13 +7,18 @@ import {
   commandCrewAttack,
   createGame,
   cycleCrewOrder,
+  cycleCrewStance,
   cycleTarget,
+  dropFirearm,
+  dropMeleeWeapon,
   fireFlintlock,
   firePitchShot,
   getCaptain,
   getCurrentMap,
   getFaction,
+  getFirearmTransferLabel,
   getInteractionLabel,
+  getMeleeTransferLabel,
   getRunSummary,
   inspectMapPoint,
   interact,
@@ -23,6 +28,8 @@ import {
   moveCaptain,
   reloadFlintlock,
   throwStone,
+  transferFirearm,
+  transferMeleeWeapon,
   useStairs,
   useSmellingSalts,
   waitTurn,
@@ -44,7 +51,7 @@ import type {
 } from "./game/types";
 import { createRenderer, getMapCamera, moveInspectionCursor, worldPointFromClient } from "./render";
 
-const SAVE_KEY = "arghipelago.active-run.v13";
+const SAVE_KEY = "arghipelago.active-run.v18";
 
 function requireElement<T extends HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -80,6 +87,10 @@ const fireButton = requireElement<HTMLButtonElement>("#fire-button");
 const crewAttackButton = requireElement<HTMLButtonElement>("#crew-attack-button");
 const pitchShotButton = requireElement<HTMLButtonElement>("#pitch-shot-button");
 const throwStoneButton = requireElement<HTMLButtonElement>("#throw-stone-button");
+const transferFirearmButton = requireElement<HTMLButtonElement>("#transfer-firearm-button");
+const transferMeleeButton = requireElement<HTMLButtonElement>("#transfer-melee-button");
+const dropFirearmButton = requireElement<HTMLButtonElement>("#drop-firearm-button");
+const dropMeleeButton = requireElement<HTMLButtonElement>("#drop-melee-button");
 const contextButton = requireElement<HTMLButtonElement>("#context-button");
 const controlsHelp = requireElement<HTMLDetailsElement>(".controls-help");
 const inspectionReadout = requireElement<HTMLElement>("#inspection-readout");
@@ -109,6 +120,11 @@ const PICKUP_DETAILS = {
   pitch: "pitch barrel",
   ammo: "powder and shot",
   salts: "smelling salts",
+  flintlock: "flintlock firearm",
+  pistol: "boarding pistol",
+  cutlass: "cutlass, +1 melee damage",
+  knife: "rigging knife, +0 melee damage",
+  boardingAxe: "boarding axe, +2 melee damage",
 } as const;
 
 const ENEMY_TACTICS: Record<EnemyType, string> = {
@@ -153,7 +169,7 @@ function loadSave(): GameState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GameState>;
     if (
-      parsed.version !== 13 ||
+      parsed.version !== 18 ||
       !parsed.levels?.surface ||
       !parsed.levels.cave ||
       !parsed.environment?.surface ||
@@ -164,6 +180,17 @@ function loadSave(): GameState | null {
       !Number.isInteger(parsed.surfaceWeather.cycle) ||
       !parsed.lastCrewOrder ||
       !["follow", "hold", "rally", "attack"].includes(parsed.lastCrewOrder) ||
+      !parsed.lastCrewStance ||
+      !["close", "ranged", "avoid"].includes(parsed.lastCrewStance) ||
+      !Number.isInteger(parsed.turn) ||
+      (parsed.turn ?? -1) < 0 ||
+      !Number.isInteger(parsed.threat) ||
+      (parsed.threat ?? -1) < 0 ||
+      !Number.isInteger(parsed.dangerLevel) ||
+      (parsed.dangerLevel ?? -1) < 0 ||
+      !Number.isInteger(parsed.lastEscalationTurn) ||
+      (parsed.lastEscalationTurn ?? -1) < 0 ||
+      (parsed.lastEscalationTurn ?? -1) > (parsed.turn ?? -1) ||
       (["surface", "cave"] as const).some((level) => {
         const map = parsed.levels?.[level];
         const effects = parsed.environment?.[level];
@@ -206,6 +233,15 @@ function loadSave(): GameState | null {
           (actor.crewTrait !== null && !["smokeShy", "powderShy", "shipmate"].includes(actor.crewTrait)) ||
           (actor.kind === "crew" && !actor.crewAssignment) ||
           (actor.kind !== "crew" && actor.crewAssignment !== null) ||
+          ((actor.kind === "crew" || actor.kind === "castaway") &&
+            !["close", "ranged", "avoid"].includes(actor.crewStance ?? "")) ||
+          (actor.kind !== "crew" && actor.kind !== "castaway" && actor.crewStance !== null) ||
+          (actor.meleeWeapon !== null && !["cutlass", "knife", "boardingAxe"].includes(actor.meleeWeapon)) ||
+          (actor.rangedWeapon !== null && !["flintlock", "pistol"].includes(actor.rangedWeapon)) ||
+          typeof actor.rangedLoaded !== "boolean" ||
+          (actor.rangedWeapon === null && actor.rangedLoaded) ||
+          (actor.kind === "enemy" && (actor.meleeWeapon !== null || actor.rangedWeapon !== null)) ||
+          (actor.kind !== "enemy" && actor.meleeWeapon === null) ||
           (actor.crewAssignment != null &&
             (!["follow", "hold", "rally", "attack"].includes(actor.crewAssignment.order) ||
               actor.crewAssignment.order === "attack" && !Number.isInteger(actor.crewAssignment.targetId) ||
@@ -223,6 +259,27 @@ function loadSave(): GameState | null {
               !Number.isInteger(actor.enemyAwareness.lastKnownPosition.y) ||
               !Number.isInteger(actor.enemyAwareness.expiresAtTurn))),
       ) ||
+      !Array.isArray(parsed.pickups) ||
+      parsed.pickups.some((pickup) => {
+        const map = pickup.level === "surface" || pickup.level === "cave" ? parsed.levels?.[pickup.level] : null;
+        const firearm = pickup.type === "flintlock" || pickup.type === "pistol";
+        return !map ||
+          !["mast", "canvas", "pitch", "ammo", "salts", "flintlock", "pistol", "cutlass", "knife", "boardingAxe"].includes(pickup.type) ||
+          !Number.isInteger(pickup.x) ||
+          !Number.isInteger(pickup.y) ||
+          pickup.x < 0 ||
+          pickup.y < 0 ||
+          pickup.x >= map.width ||
+          pickup.y >= map.height ||
+          typeof pickup.collected !== "boolean" ||
+          typeof pickup.loaded !== "boolean" ||
+          (!firearm && pickup.loaded);
+      }) ||
+      !parsed.inventory ||
+      !Number.isInteger(parsed.inventory.ammo) ||
+      parsed.inventory.ammo < 0 ||
+      !Number.isInteger(parsed.inventory.salts) ||
+      parsed.inventory.salts < 0 ||
       !parsed.recoveredParts ||
       !parsed.repairs
     ) return null;
@@ -288,9 +345,21 @@ function inspectionDescription(result: MapInspection): string {
       const attribute = actor.enemyAttribute ? `, ${ENEMY_ATTRIBUTE_DETAILS[actor.enemyAttribute]}` : "";
       details.push(`${actor.name}, ${getFaction(actor)}, ${behavior}, ${actor.hp}/${actor.maxHp} vigor, ${tactic}${attribute}`);
     }
+    if (actor.kind !== "enemy") {
+      const melee = actor.meleeWeapon === "boardingAxe" ? "boarding axe" : actor.meleeWeapon ?? "unarmed";
+      const ranged = actor.rangedWeapon
+        ? `${actor.rangedWeapon}, ${actor.rangedLoaded ? "loaded" : "empty"}`
+        : "no firearm";
+      details.push(`${actor.name} carries ${melee}; ${ranged}`);
+    }
     if (isWet(state as GameState, actor)) details.push(`${actor.name} is wet; firearms and fire behave differently`);
   }
-  for (const pickup of result.pickups) details.push(`${PICKUP_DETAILS[pickup.type]} here`);
+  for (const pickup of result.pickups) {
+    const firearmState = pickup.type === "flintlock" || pickup.type === "pistol"
+      ? `, ${pickup.loaded ? "loaded" : "empty"}`
+      : "";
+    details.push(`${PICKUP_DETAILS[pickup.type]}${firearmState} here`);
+  }
   const prefix = result.visibility === "remembered" ? "Remembered: " : "Visible: ";
   return `${prefix}${details.join("; ")}.`;
 }
@@ -346,14 +415,20 @@ function renderInterface(): void {
   const activeInspection = inspection?.level === state.currentLevel ? inspection : null;
   renderer.draw(state, activeInspection?.point);
   captainHeading.textContent = `Captain ${player.name}`;
+  const meleeWeapon = (player.meleeWeapon === "boardingAxe" ? "boarding axe" : player.meleeWeapon ?? "unarmed")
+    .replace(/^./, (letter) => letter.toUpperCase());
+  const rangedWeapon = player.rangedWeapon
+    ? `${player.rangedWeapon.replace(/^./, (letter) => letter.toUpperCase())}: ${isWet(state, player) ? "damp" : player.rangedLoaded ? "loaded" : "empty"}`
+    : "No firearm";
   captainStats.innerHTML = `
     <div class="health-line"><span>VIGOR</span><strong>${healthPips(player.hp, player.maxHp)}</strong><span>${player.hp}/${player.maxHp}</span></div>
-    <div class="equipment-line"><span>Cutlass</span><span>Flintlock: ${isWet(state, player) ? "damp" : state.inventory.loaded ? "loaded" : "empty"}</span></div>
+    <div class="equipment-line"><span>${meleeWeapon}</span><span>${rangedWeapon}</span></div>
     <div class="equipment-line"><span>Shot: ${state.inventory.ammo}</span><span>Salts: ${state.inventory.salts}</span></div>
     <div class="seed-line">Chart: ${escapeHtml(state.seed)} / ${state.currentLevel === "surface" ? `Island / ${state.surfaceWeather.phase === "rain" ? "Heavy rain" : state.surfaceWeather.phase === "squallWarning" ? "Squall building" : "Fair"}` : "Cave / Sheltered underground"}</div>
   `;
   turnCount.textContent = `Turn ${state.turn}`;
-  dangerLevel.textContent = state.dangerLevel === 0 ? "Quiet-ish" : state.dangerLevel === 1 ? "Restless" : "Very noticed";
+  const dangerLabel = state.dangerLevel === 0 ? "Quiet-ish" : state.dangerLevel === 1 ? "Restless" : "Very noticed";
+  dangerLevel.textContent = `${dangerLabel} / Attention ${state.threat}`;
   repairList.innerHTML = [
     repairRow("mast", "Replacement mast"),
     repairRow("canvas", "Sailcloth"),
@@ -372,7 +447,20 @@ function renderInterface(): void {
       : assignment.order[0]?.toUpperCase() + assignment.order.slice(1);
   };
   const activeOrders = new Set(crew.map(assignmentLabel));
-  crewOrder.textContent = activeOrders.size > 1 ? "Mixed orders" : activeOrders.values().next().value ?? "Follow";
+  const stanceLabel = (member: typeof crew[number]): string => {
+    const stance = member.crewStance ?? "close";
+    const label = stance[0]?.toUpperCase() + stance.slice(1);
+    const firearm = member.rangedWeapon
+      ? `${member.rangedWeapon.replace(/^./, (letter) => letter.toUpperCase())} ${member.rangedLoaded ? "loaded" : "empty"}`
+      : "No firearm";
+    return `${label} / ${firearm}`;
+  };
+  const activeStances = new Set(crew.map((member) => member.crewStance ?? "close"));
+  const orderSummary = activeOrders.size > 1 ? "Mixed orders" : activeOrders.values().next().value ?? "Follow";
+  const stanceSummary = activeStances.size > 1
+    ? "Mixed stances"
+    : (activeStances.values().next().value ?? "close").replace(/^./, (letter) => letter.toUpperCase());
+  crewOrder.textContent = `${orderSummary} / ${stanceSummary}`;
   crewList.innerHTML = crew.length
     ? crew
         .map(
@@ -382,7 +470,7 @@ function renderInterface(): void {
               : `${member.hp}/${member.maxHp} vigor${isWet(state as GameState, member) ? " / Wet" : ""}`;
             const trait = member.crewTrait ? CREW_TRAIT_DETAILS[member.crewTrait].split(":")[0] : "Unremarkable";
             const reaction = member.crewReaction === "brace" ? " / Bracing" : "";
-            return `<div class="crew-row ${isIncapacitated(member) ? "incapacitated" : ""}"><strong>${escapeHtml(member.name)}</strong><span>${escapeHtml(member.role ?? "Pirate")} / ${trait}</span><span>${status}${reaction} / ${escapeHtml(assignmentLabel(member))}</span></div>`;
+            return `<div class="crew-row ${isIncapacitated(member) ? "incapacitated" : ""}"><strong>${escapeHtml(member.name)}</strong><span>${escapeHtml(member.role ?? "Pirate")} / ${trait}</span><span>${status}${reaction} / ${escapeHtml(assignmentLabel(member))} / ${escapeHtml(stanceLabel(member))}</span></div>`;
           },
         )
         .join("")
@@ -393,10 +481,15 @@ function renderInterface(): void {
     .map((message, index) => `<p class="${index === 0 ? "latest" : ""}">${escapeHtml(message)}</p>`)
     .join("");
   const target = state.actors.find((actor) => actor.alive && actor.id === state?.targetId);
-  fireButton.textContent = target ? `Fire at ${target.name}` : "Aim flintlock";
+  fireButton.textContent = !player.rangedWeapon ? "No firearm" : target ? `Fire at ${target.name}` : `Aim ${player.rangedWeapon}`;
   crewAttackButton.textContent = target ? `Attack ${target.name}` : "Attack target";
   pitchShotButton.textContent = state.recoveredParts.pitch && target ? `Burn ${target.name}` : "Pitch shot";
   pitchShotButton.disabled = !state.recoveredParts.pitch;
+  transferFirearmButton.textContent = getFirearmTransferLabel(state);
+  transferMeleeButton.textContent = getMeleeTransferLabel(state);
+  dropFirearmButton.textContent = player.rangedWeapon ? `Drop ${player.rangedWeapon}` : "No firearm to drop";
+  const meleeLabel = player.meleeWeapon === "boardingAxe" ? "boarding axe" : player.meleeWeapon;
+  dropMeleeButton.textContent = meleeLabel ? `Drop ${meleeLabel}` : "No blade to drop";
   const onStairs =
     (state.currentLevel === "surface" && player.x === state.caveEntrance.x && player.y === state.caveEntrance.y) ||
     (state.currentLevel === "cave" && player.x === state.caveExit.x && player.y === state.caveExit.y);
@@ -490,6 +583,11 @@ function handleAction(action: string): void {
     } else commitAction(() => fireFlintlock(state as GameState));
   } else if (action === "pitch-shot") commitAction(() => firePitchShot(state as GameState));
   else if (action === "order") commitAction(() => cycleCrewOrder(state as GameState));
+  else if (action === "stance") commitAction(() => cycleCrewStance(state as GameState));
+  else if (action === "transfer-firearm") commitAction(() => transferFirearm(state as GameState));
+  else if (action === "transfer-melee") commitAction(() => transferMeleeWeapon(state as GameState));
+  else if (action === "drop-firearm") commitAction(() => dropFirearm(state as GameState));
+  else if (action === "drop-melee") commitAction(() => dropMeleeWeapon(state as GameState));
   else if (action === "crew-attack") commitAction(() => commandCrewAttack(state as GameState));
   else if (action === "interact") commitAction(() => interact(state as GameState));
 }
@@ -621,6 +719,11 @@ document.addEventListener("keydown", (event) => {
   else if (event.key.toLowerCase() === "f") handleAction(state.targetId === null ? "target-next" : "fire");
   else if (event.key.toLowerCase() === "a") handleAction("crew-attack");
   else if (event.key.toLowerCase() === "c") handleAction("order");
+  else if (event.key.toLowerCase() === "v") handleAction("stance");
+  else if (event.key.toLowerCase() === "i") handleAction("transfer-firearm");
+  else if (event.key.toLowerCase() === "o") handleAction("transfer-melee");
+  else if (event.key.toLowerCase() === "g") handleAction("drop-firearm");
+  else if (event.key.toLowerCase() === "q") handleAction("drop-melee");
   else if (event.key === "Tab") {
     event.preventDefault();
     handleAction("target-next");

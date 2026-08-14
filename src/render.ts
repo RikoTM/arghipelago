@@ -320,6 +320,28 @@ function drawPickup(context: CanvasRenderingContext2D, type: PickupType): void {
     context.strokeRect(9, 8, 14, 20);
     inkLine(context, [[9, 13], [23, 13]], 1);
     inkLine(context, [[9, 23], [23, 23]], 1);
+  } else if (type === "cutlass" || type === "knife" || type === "boardingAxe") {
+    if (type === "boardingAxe") {
+      inkLine(context, [[8, 29], [20, 8]], 3);
+      context.beginPath();
+      context.moveTo(17, 7);
+      context.lineTo(27, 5);
+      context.lineTo(24, 15);
+      context.lineTo(19, 12);
+      context.closePath();
+      context.fill();
+      context.stroke();
+    } else {
+      const bladeEnd = type === "cutlass" ? 27 : 23;
+      inkLine(context, [[8, 26], [bladeEnd, 7]], type === "cutlass" ? 3 : 2);
+      inkLine(context, [[7, 23], [12, 28]], 2);
+    }
+  } else if (type === "flintlock" || type === "pistol") {
+    const stockEnd = type === "flintlock" ? 4 : 8;
+    const barrelEnd = type === "flintlock" ? 29 : 25;
+    inkLine(context, [[stockEnd, 23], [13, 17], [barrelEnd, 9]], 3);
+    inkLine(context, [[12, 18], [15, 25], [20, 24]], 2);
+    inkLine(context, [[17, 15], [20, 19]], 1);
   } else if (type === "ammo") {
     context.beginPath();
     context.arc(16, 19, 8, 0, Math.PI * 2);

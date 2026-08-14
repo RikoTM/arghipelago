@@ -17,6 +17,7 @@ export type EnemyAwarenessMode = "investigating" | "pursuing";
 export type Faction = "party" | "boneCrew" | "shoreBrood" | "cinderkin" | "neutral";
 export type LevelId = "surface" | "cave";
 export type CrewOrder = "follow" | "hold" | "rally" | "attack";
+export type CrewStance = "close" | "ranged" | "avoid";
 export type CrewTrait = "smokeShy" | "powderShy" | "shipmate";
 export type CrewReaction = "brace" | null;
 export type GamePhase = "playing" | "won" | "lost";
@@ -25,7 +26,9 @@ export type Background = "privateer" | "navigator" | "surgeon";
 export type Knack = "duelist" | "deadeye" | "lucky";
 export type Coat = "crimson" | "navy" | "moss";
 export type RepairPart = "mast" | "canvas" | "pitch";
-export type PickupType = RepairPart | "ammo" | "salts";
+export type MeleeWeapon = "cutlass" | "knife" | "boardingAxe";
+export type RangedWeapon = "flintlock" | "pistol";
+export type PickupType = RepairPart | MeleeWeapon | RangedWeapon | "ammo" | "salts";
 
 export interface Point {
   x: number;
@@ -74,6 +77,10 @@ export interface Actor extends Point {
   enemyAttribute: EnemyAttribute | null;
   crewTrait: CrewTrait | null;
   crewAssignment: CrewAssignment | null;
+  crewStance: CrewStance | null;
+  meleeWeapon: MeleeWeapon | null;
+  rangedWeapon: RangedWeapon | null;
+  rangedLoaded: boolean;
   crewReaction: CrewReaction;
   reactionCooldownUntilTurn: number;
   stabilized: boolean;
@@ -91,10 +98,10 @@ export interface Pickup extends Point {
   level: LevelId;
   type: PickupType;
   collected: boolean;
+  loaded: boolean;
 }
 
 export interface Inventory {
-  loaded: boolean;
   ammo: number;
   salts: number;
 }
@@ -111,7 +118,7 @@ export interface SurfaceWeather {
 }
 
 export interface GameState {
-  version: 13;
+  version: 18;
   seed: string;
   rngState: number;
   levels: Record<LevelId, MapLevel>;
@@ -127,8 +134,10 @@ export interface GameState {
   turn: number;
   threat: number;
   dangerLevel: number;
+  lastEscalationTurn: number;
   surfaceWeather: SurfaceWeather;
   lastCrewOrder: CrewOrder;
+  lastCrewStance: CrewStance;
   inventory: Inventory;
   recoveredParts: Record<RepairPart, boolean>;
   repairs: Record<RepairPart, boolean>;
