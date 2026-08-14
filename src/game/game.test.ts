@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   areActorsHostile,
   commandCrewAttack,
+  commandCrewRally,
   createGame,
   cycleCrewOrder,
   cycleCrewStance,
@@ -419,18 +420,18 @@ describe("game simulation", () => {
     player.hp = player.maxHp - 5;
     nearby.kind = "crew";
     nearby.crewTrait = "smokeShy";
-    nearby.crewAssignment = { order: "follow", targetId: null };
+    nearby.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
     nearby.x = player.x + dx;
     nearby.y = player.y;
     nearby.hp = nearby.maxHp - 3;
     downed.kind = "crew";
-    downed.crewAssignment = { order: "follow", targetId: null };
+    downed.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
     downed.x = player.x;
     downed.y = player.y + dy;
     downed.hp = 0;
     downed.incapacitatedTurns = 5;
     distant.kind = "crew";
-    distant.crewAssignment = { order: "hold", targetId: null };
+    distant.crewAssignment = { order: "hold", targetId: null, targetPosition: null };
     distant.x = player.x + dx * 3;
     distant.y = player.y;
     distant.hp = distant.maxHp - 4;
@@ -1474,7 +1475,7 @@ describe("game simulation", () => {
       target.maxHp = 20;
       target.enemyAttribute = null;
       ally.kind = "crew";
-      ally.crewAssignment = { order: "hold", targetId: null };
+      ally.crewAssignment = { order: "hold", targetId: null, targetPosition: null };
       ally.crewReaction = "brace";
       ally.x = opposite ? 22 : 22;
       ally.y = opposite ? 20 : 21;
@@ -1858,7 +1859,7 @@ describe("game simulation", () => {
     expect(commandCrewAttack(state)).toBe(true);
     expect(state.turn).toBe(1);
     expect(state.lastCrewOrder).toBe("attack");
-    expect(crew.crewAssignment).toEqual({ order: "attack", targetId: target.id });
+    expect(crew.crewAssignment).toEqual({ order: "attack", targetId: target.id, targetPosition: null });
     expect(Math.max(Math.abs(crew.x - target.x), Math.abs(crew.y - target.y))).toBe(5);
   });
 
@@ -1895,7 +1896,7 @@ describe("game simulation", () => {
 
     expect(commandCrewAttack(state)).toBe(true);
     expect(target.alive).toBe(false);
-    expect(crew.crewAssignment).toEqual({ order: "follow", targetId: null });
+    expect(crew.crewAssignment).toEqual({ order: "follow", targetId: null, targetPosition: null });
   });
 
   it("does not spend a turn on an attack order without crew or a selected target", () => {
@@ -1928,10 +1929,11 @@ describe("game simulation", () => {
     crew.crewAssignment = {
       order: "attack",
       targetId: state.actors.find((actor) => actor.kind === "enemy")?.id ?? null,
+      targetPosition: null,
     };
 
     expect(cycleCrewOrder(state)).toBe("follow");
-    expect(crew.crewAssignment).toEqual({ order: "follow", targetId: null });
+    expect(crew.crewAssignment).toEqual({ order: "follow", targetId: null, targetPosition: null });
   });
 
   it("passes the captain's firearm to adjacent crew and recovers it from a casualty", () => {
@@ -1944,7 +1946,7 @@ describe("game simulation", () => {
     player.x = 20;
     player.y = 20;
     crew.kind = "crew";
-    crew.crewAssignment = { order: "follow", targetId: null };
+    crew.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
     crew.x = 21;
     crew.y = 20;
 
@@ -1973,7 +1975,7 @@ describe("game simulation", () => {
     player.y = 20;
     player.meleeWeapon = "boardingAxe";
     crew.kind = "crew";
-    crew.crewAssignment = { order: "follow", targetId: null };
+    crew.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
     crew.x = 21;
     crew.y = 20;
 
@@ -2003,7 +2005,7 @@ describe("game simulation", () => {
     player.y = 20;
     player.armor = "breastplate";
     crew.kind = "crew";
-    crew.crewAssignment = { order: "follow", targetId: null };
+    crew.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
     crew.armor = "leatherCoat";
     crew.x = 21;
     crew.y = 20;
@@ -2053,7 +2055,7 @@ describe("game simulation", () => {
     player.y = 20;
     crew.kind = "crew";
     crew.crewTrait = "shipmate";
-    crew.crewAssignment = { order: "follow", targetId: null };
+    crew.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
     crew.x = 21;
     crew.y = 20;
     target.x = 26;
@@ -2091,7 +2093,7 @@ describe("game simulation", () => {
     player.y = 20;
     gunner.kind = "crew";
     gunner.crewTrait = "shipmate";
-    gunner.crewAssignment = { order: "follow", targetId: null };
+    gunner.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
     gunner.x = 21;
     gunner.y = 20;
     target.x = 26;
@@ -2132,7 +2134,7 @@ describe("game simulation", () => {
     player.x = 20;
     player.y = 20;
     crew.kind = "crew";
-    crew.crewAssignment = { order: "follow", targetId: null };
+    crew.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
     crew.crewStance = "avoid";
     crew.x = 21;
     crew.y = 20;
@@ -2194,11 +2196,95 @@ describe("game simulation", () => {
     crew.x = state.wreck.x + 1;
     crew.y = state.wreck.y;
     crew.crewReaction = "brace";
-    crew.crewAssignment = { order: "hold", targetId: null };
+    crew.crewAssignment = { order: "hold", targetId: null, targetPosition: null };
     state.lastCrewOrder = "hold";
 
     expect(cycleCrewOrder(state)).toBe("rally");
     expect(crew.crewReaction).toBeNull();
+    expect(crew.crewAssignment?.targetPosition).toEqual(state.wreck);
+  });
+
+  it("moves crew toward a selected rally point deterministically and persists the assignment", () => {
+    const state = createGame(captain, "positional-rally");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    expect(crew).toBeDefined();
+    if (!crew) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    for (const tile of state.levels.surface.tiles) {
+      tile.terrain = "grass";
+      tile.explored = true;
+    }
+    player.x = 20;
+    player.y = 20;
+    crew.kind = "crew";
+    crew.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
+    crew.x = 21;
+    crew.y = 20;
+    const target = { x: 26, y: 20 };
+    const repeat = JSON.parse(JSON.stringify(state)) as typeof state;
+
+    expect(commandCrewRally(state, target)).toBe(true);
+    expect(commandCrewRally(repeat, target)).toBe(true);
+
+    expect(state.turn).toBe(1);
+    expect(crew.crewAssignment).toEqual({ order: "rally", targetId: null, targetPosition: target });
+    expect(Math.max(Math.abs(crew.x - target.x), Math.abs(crew.y - target.y))).toBe(4);
+    const restored = JSON.parse(JSON.stringify(state)) as typeof state;
+    expect(restored.actors.find((actor) => actor.id === crew.id)?.crewAssignment).toEqual(crew.crewAssignment);
+
+    for (let turn = 0; turn < 3; turn += 1) {
+      waitTurn(state);
+      waitTurn(repeat);
+    }
+
+    expect(Math.max(Math.abs(crew.x - target.x), Math.abs(crew.y - target.y))).toBeLessThanOrEqual(1);
+    expect(state).toEqual(repeat);
+  });
+
+  it("rejects unsafe rally points without spending a turn", () => {
+    const state = createGame(captain, "invalid-rally-point");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    const enemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "surface");
+    expect(crew).toBeDefined();
+    expect(enemy).toBeDefined();
+    if (!crew || !enemy) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    player.x = 20;
+    player.y = 20;
+    crew.kind = "crew";
+    crew.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
+    crew.x = 21;
+    crew.y = 20;
+    const map = state.levels.surface;
+    const target = { x: 22, y: 20 };
+    const tile = map.tiles[tileIndex(target.x, target.y, map.width)];
+    expect(tile).toBeDefined();
+    if (!tile) return;
+
+    tile.terrain = "water";
+    tile.explored = true;
+    expect(commandCrewRally(state, target)).toBe(false);
+
+    tile.terrain = "grass";
+    tile.explored = false;
+    expect(commandCrewRally(state, target)).toBe(false);
+
+    tile.explored = true;
+    state.environment.surface = [{ ...target, fireTurns: 2, smokeTurns: 4 }];
+    expect(commandCrewRally(state, target)).toBe(false);
+
+    state.environment.surface = [];
+    enemy.alive = true;
+    enemy.enemyType = "skeleton";
+    enemy.x = target.x;
+    enemy.y = target.y;
+    tile.visible = true;
+    expect(commandCrewRally(state, target)).toBe(false);
+
+    expect(state.turn).toBe(0);
+    expect(crew.crewAssignment).toEqual({ order: "follow", targetId: null, targetPosition: null });
   });
 
   it("delivers orders only to active crew reached through terrain and rain", () => {
@@ -2225,7 +2311,7 @@ describe("game simulation", () => {
     terrainMuffled.kind = "crew";
     terrainMuffled.x = 24;
     terrainMuffled.y = 20;
-    for (const member of crew) member.crewAssignment = { order: "follow", targetId: null };
+    for (const member of crew) member.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
     for (let y = 20; y <= 25; y += 1) {
       const tile = state.levels.surface.tiles[tileIndex(20, y, state.levels.surface.width)];
       if (tile) tile.terrain = "grass";
@@ -2240,9 +2326,9 @@ describe("game simulation", () => {
 
     expect(cycleCrewOrder(state)).toBe("hold");
 
-    expect(audible.crewAssignment).toEqual({ order: "hold", targetId: null });
-    expect(rainMuffled.crewAssignment).toEqual({ order: "follow", targetId: null });
-    expect(terrainMuffled.crewAssignment).toEqual({ order: "follow", targetId: null });
+    expect(audible.crewAssignment).toEqual({ order: "hold", targetId: null, targetPosition: null });
+    expect(rainMuffled.crewAssignment).toEqual({ order: "follow", targetId: null, targetPosition: null });
+    expect(terrainMuffled.crewAssignment).toEqual({ order: "follow", targetId: null, targetPosition: null });
     expect(state.messages.at(-1)).toContain("1 of 3 crewmates hear it");
   });
 
@@ -2266,16 +2352,18 @@ describe("game simulation", () => {
     distant.x = 28;
     distant.y = 20;
     for (const member of crew) {
-      member.crewAssignment = { order: "hold", targetId: null };
+      member.crewAssignment = { order: "hold", targetId: null, targetPosition: null };
       member.crewReaction = "brace";
     }
     state.lastCrewOrder = "hold";
+    updateVisibility(state);
+    const rallyPoint = { x: 24, y: 20 };
 
-    expect(cycleCrewOrder(state)).toBe("rally");
+    expect(commandCrewRally(state, rallyPoint)).toBe(true);
 
-    expect(nearby.crewAssignment).toEqual({ order: "rally", targetId: null });
+    expect(nearby.crewAssignment).toEqual({ order: "rally", targetId: null, targetPosition: rallyPoint });
     expect(nearby.reactionCooldownUntilTurn).toBe(0);
-    expect(distant.crewAssignment).toEqual({ order: "hold", targetId: null });
+    expect(distant.crewAssignment).toEqual({ order: "hold", targetId: null, targetPosition: null });
     expect(distant.reactionCooldownUntilTurn).toBeGreaterThan(state.turn);
   });
 
@@ -2927,7 +3015,7 @@ describe("game simulation", () => {
     player.x = springIndex % map.width;
     player.y = Math.floor(springIndex / map.width);
     crew.kind = "crew";
-    crew.crewAssignment = { order: "follow", targetId: null };
+    crew.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
     crew.x = player.x + 1;
     crew.y = player.y;
 
@@ -2977,16 +3065,21 @@ describe("game simulation", () => {
   it("transitions between the surface and cave without activating enemies on the other level", () => {
     const state = createGame(captain, "subterranean-test");
     const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
     const surfaceEnemy = state.actors.find((actor) => actor.level === "surface" && actor.kind === "enemy");
+    expect(crew).toBeDefined();
     expect(surfaceEnemy).toBeDefined();
-    if (!surfaceEnemy) return;
+    if (!crew || !surfaceEnemy) return;
     const originalEnemyPosition = { x: surfaceEnemy.x, y: surfaceEnemy.y };
     player.x = state.caveEntrance.x;
     player.y = state.caveEntrance.y;
+    crew.kind = "crew";
+    crew.crewAssignment = { order: "rally", targetId: null, targetPosition: { ...state.wreck } };
 
     expect(useStairs(state)).toBe(true);
     expect(state.currentLevel).toBe("cave");
     expect(player.level).toBe("cave");
+    expect(crew.crewAssignment).toEqual({ order: "follow", targetId: null, targetPosition: null });
     expect({ x: surfaceEnemy.x, y: surfaceEnemy.y }).toEqual(originalEnemyPosition);
     expect(useStairs(state)).toBe(true);
     expect(state.currentLevel).toBe("surface");

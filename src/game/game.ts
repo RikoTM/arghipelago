@@ -932,7 +932,7 @@ function recruitNearby(state: GameState): void {
       distance(player, actor) <= 1
     ) {
       actor.kind = "crew";
-      actor.crewAssignment = { order: "follow", targetId: null };
+      actor.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
       addMessage(state, `${actor.name} joins the crew. ${actor.role ?? "Qualifications remain hazy."}`);
       return;
     }
@@ -1147,7 +1147,7 @@ function runCrewTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
   for (const crew of state.actors.filter(
     (actor) => canAct(actor) && actor.level === state.currentLevel && actor.kind === "crew",
   )) {
-    const assignment = crew.crewAssignment ?? { order: "follow" as const, targetId: null };
+    const assignment = crew.crewAssignment ?? { order: "follow" as const, targetId: null, targetPosition: null };
     const stance = crew.crewStance ?? "close";
     let order = assignment.order;
     let orderedTarget = order === "attack"
@@ -1160,7 +1160,7 @@ function runCrewTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
         )
       : undefined;
     if (order === "attack" && !orderedTarget) {
-      crew.crewAssignment = { order: "follow", targetId: null };
+      crew.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
       order = "follow";
       addMessage(state, `${crew.name}'s target is no longer available. ${crew.name} resumes following.`);
     }
@@ -1182,7 +1182,7 @@ function runCrewTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
     if (orderedTarget?.alive) {
       if (stance === "ranged" && useCrewFirearm(state, crew, orderedTarget, rng, sounds)) {
         if (!orderedTarget.alive) {
-          crew.crewAssignment = { order: "follow", targetId: null };
+          crew.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
           addMessage(state, `${orderedTarget.name} is down. ${crew.name} resumes following.`);
         }
         continue;
@@ -1196,7 +1196,7 @@ function runCrewTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
         if (step) tryMoveActor(state, crew, step.x, step.y);
       }
       if (!orderedTarget.alive) {
-        crew.crewAssignment = { order: "follow", targetId: null };
+        crew.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
         addMessage(state, `${orderedTarget.name} is down. ${crew.name} resumes following.`);
       }
       continue;
@@ -1215,9 +1215,10 @@ function runCrewTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
       continue;
     }
     if (order === "hold") continue;
+    const destination = order === "rally" ? assignment.targetPosition ?? player : player;
     const desiredDistance = order === "rally" ? 1 : 2;
-    if (distance(crew, player) > desiredDistance) {
-      const step = bestStepToward(state, crew, player, desiredDistance);
+    if (distance(crew, destination) > desiredDistance) {
+      const step = bestStepToward(state, crew, destination, desiredDistance);
       if (step) tryMoveActor(state, crew, step.x, step.y);
     }
   }
@@ -2149,11 +2150,61 @@ export function cycleCrewOrder(state: GameState): CrewOrder {
   const order = ORDER_SEQUENCE[(index + 1) % ORDER_SEQUENCE.length] ?? "follow";
   const sound = makeSound("command", captain(state));
   const recipients = commandRecipients(state, sound);
-  for (const crew of recipients) crew.crewAssignment = { order, targetId: null };
+  const rallyPosition = order === "rally" ? { x: sound.origin.x, y: sound.origin.y } : null;
+  for (const crew of recipients) {
+    crew.crewAssignment = { order, targetId: null, targetPosition: rallyPosition ? { ...rallyPosition } : null };
+  }
   state.lastCrewOrder = order;
-  addMessage(state, `Crew order: ${order}. ${recipients.length} of ${crewCount} crewmates hear it.`);
+  const destination = rallyPosition ? ` at ${rallyPosition.x},${rallyPosition.y}` : "";
+  addMessage(state, `Crew order: ${order}${destination}. ${recipients.length} of ${crewCount} crewmates hear it.`);
   finishTurn(state, [sound]);
   return order;
+}
+
+export function commandCrewRally(state: GameState, target: Point): boolean {
+  if (state.phase !== "playing") return false;
+  const crewCount = state.actors.filter(
+    (actor) => canAct(actor) && actor.level === state.currentLevel && actor.kind === "crew",
+  ).length;
+  if (crewCount === 0) {
+    addMessage(state, "There is no crew here to receive a rally order.");
+    return false;
+  }
+  const map = currentMap(state);
+  const tile = inBounds(target.x, target.y, map.width, map.height)
+    ? map.tiles[tileIndex(target.x, target.y, map.width)]
+    : null;
+  if (!tile?.explored || !isPassableTerrain(tile.terrain)) {
+    addMessage(state, "Choose a known, passable tile before ordering a rally.");
+    return false;
+  }
+  if (environmentAt(state, state.currentLevel, target)?.fireTurns) {
+    addMessage(state, "The crew declines to rally in active fire.");
+    return false;
+  }
+  const hostile = state.actors.find(
+    (actor) =>
+      canAct(actor) &&
+      actor.level === state.currentLevel &&
+      actor.kind === "enemy" &&
+      !isEnemyConcealed(actor) &&
+      actor.x === target.x &&
+      actor.y === target.y &&
+      tile.visible,
+  );
+  if (hostile) {
+    addMessage(state, `${hostile.name} currently occupies that rally point.`);
+    return false;
+  }
+  const sound = makeSound("command", captain(state));
+  const recipients = commandRecipients(state, sound);
+  for (const crew of recipients) {
+    crew.crewAssignment = { order: "rally", targetId: null, targetPosition: { x: target.x, y: target.y } };
+  }
+  state.lastCrewOrder = "rally";
+  addMessage(state, `Crew rally: ${target.x},${target.y}. ${recipients.length} of ${crewCount} crewmates hear it.`);
+  finishTurn(state, [sound]);
+  return true;
 }
 
 export function cycleCrewStance(state: GameState): CrewStance {
@@ -2206,7 +2257,7 @@ export function commandCrewAttack(state: GameState): boolean {
 
   const sound = makeSound("command", captain(state));
   const recipients = commandRecipients(state, sound);
-  for (const crew of recipients) crew.crewAssignment = { order: "attack", targetId: target.id };
+  for (const crew of recipients) crew.crewAssignment = { order: "attack", targetId: target.id, targetPosition: null };
   state.lastCrewOrder = "attack";
   addMessage(state, `Crew order: attack ${target.name}. ${recipients.length} of ${crewCount} crewmates hear it.`);
   finishTurn(state, [sound]);
@@ -2478,6 +2529,9 @@ export function useStairs(state: GameState): boolean {
   playerActor.x = destination.x;
   playerActor.y = destination.y;
   for (const actor of travellingActors.filter((candidate) => candidate.kind === "crew")) {
+    if (actor.crewAssignment?.order === "rally") {
+      actor.crewAssignment = { order: "follow", targetId: null, targetPosition: null };
+    }
     actor.level = destinationLevel;
     const position = DIRECTIONS.map((direction) => ({
       x: destination.x + direction.x,

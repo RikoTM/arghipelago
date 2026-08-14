@@ -69,6 +69,7 @@ export interface EnemyAwareness {
 export interface CrewAssignment {
   order: CrewOrder;
   targetId: number | null;
+  targetPosition: Point | null;
 }
 
 export interface Actor extends Point {

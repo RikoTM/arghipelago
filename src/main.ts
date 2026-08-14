@@ -5,6 +5,7 @@ import "@fontsource/pirata-one/400.css";
 import "@fontsource/special-elite/400.css";
 import {
   commandCrewAttack,
+  commandCrewRally,
   createGame,
   cycleCrewOrder,
   cycleCrewStance,
@@ -87,6 +88,7 @@ const summaryEnemies = requireElement<HTMLElement>("#summary-enemies");
 const retryRunButton = requireElement<HTMLButtonElement>("#retry-run-button");
 const newCaptainButton = requireElement<HTMLButtonElement>("#new-captain-button");
 const fireButton = requireElement<HTMLButtonElement>("#fire-button");
+const crewOrderButton = requireElement<HTMLButtonElement>("#crew-order-button");
 const crewAttackButton = requireElement<HTMLButtonElement>("#crew-attack-button");
 const pitchShotButton = requireElement<HTMLButtonElement>("#pitch-shot-button");
 const throwStoneButton = requireElement<HTMLButtonElement>("#throw-stone-button");
@@ -179,6 +181,17 @@ function loadSave(): GameState | null {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GameState>;
+    // Earlier version-19 saves used a captain-relative rally with no stored point.
+    if (Array.isArray(parsed.actors)) {
+      const savedCaptain = parsed.actors.find((actor) => actor.id === parsed.captainId);
+      for (const actor of parsed.actors) {
+        if (actor.crewAssignment && actor.crewAssignment.targetPosition === undefined) {
+          actor.crewAssignment.targetPosition = actor.crewAssignment.order === "rally" && savedCaptain
+            ? { x: savedCaptain.x, y: savedCaptain.y }
+            : null;
+        }
+      }
+    }
     if (
       parsed.version !== 19 ||
       !parsed.levels?.surface ||
@@ -229,8 +242,26 @@ function loadSave(): GameState | null {
         });
       }) ||
       !Array.isArray(parsed.actors) ||
-      parsed.actors.some(
-        (actor) =>
+      parsed.actors.some((actor) => {
+        const assignment = actor.crewAssignment;
+        const rallyTarget = assignment?.targetPosition;
+        const actorMap = actor.level === "surface" || actor.level === "cave" ? parsed.levels?.[actor.level] : null;
+        const invalidAssignment = assignment != null &&
+          (!["follow", "hold", "rally", "attack"].includes(assignment.order) ||
+            assignment.order === "attack" && !Number.isInteger(assignment.targetId) ||
+            assignment.order !== "attack" && assignment.targetId !== null ||
+            assignment.order === "rally" &&
+              (!rallyTarget ||
+                !actorMap ||
+                !Number.isInteger(rallyTarget.x) ||
+                !Number.isInteger(rallyTarget.y) ||
+                rallyTarget.x < 0 ||
+                rallyTarget.y < 0 ||
+                rallyTarget.x >= actorMap.width ||
+                rallyTarget.y >= actorMap.height ||
+                ["water", "caveWall"].includes(actorMap.tiles[rallyTarget.y * actorMap.width + rallyTarget.x]?.terrain ?? "water")) ||
+            assignment.order !== "rally" && rallyTarget !== null);
+        return (
           !Number.isInteger(actor.incapacitatedTurns) ||
           !Number.isInteger(actor.wetUntilTurn) ||
           actor.wetUntilTurn < 0 ||
@@ -257,10 +288,7 @@ function loadSave(): GameState | null {
               actor.armor !== null ||
               (actor.rangedWeapon !== null &&
                 (actor.enemyType !== "bonegunner" || actor.rangedWeapon !== "flintlock")))) ||
-          (actor.crewAssignment != null &&
-            (!["follow", "hold", "rally", "attack"].includes(actor.crewAssignment.order) ||
-              actor.crewAssignment.order === "attack" && !Number.isInteger(actor.crewAssignment.targetId) ||
-              actor.crewAssignment.order !== "attack" && actor.crewAssignment.targetId !== null)) ||
+          invalidAssignment ||
           (actor.crewReaction !== null && actor.crewReaction !== "brace") ||
           !Number.isInteger(actor.reactionCooldownUntilTurn) ||
           typeof actor.stabilized !== "boolean" ||
@@ -272,8 +300,9 @@ function loadSave(): GameState | null {
               actor.enemyAwareness.mode === "pursuing" && actor.enemyAwareness.targetId === null ||
               !Number.isInteger(actor.enemyAwareness.lastKnownPosition.x) ||
               !Number.isInteger(actor.enemyAwareness.lastKnownPosition.y) ||
-              !Number.isInteger(actor.enemyAwareness.expiresAtTurn))),
-      ) ||
+              !Number.isInteger(actor.enemyAwareness.expiresAtTurn)))
+        );
+      }) ||
       !Array.isArray(parsed.pickups) ||
       parsed.pickups.some((pickup) => {
         const map = pickup.level === "surface" || pickup.level === "cave" ? parsed.levels?.[pickup.level] : null;
@@ -467,13 +496,15 @@ function renderInterface(): void {
   const activeLevel = state.currentLevel;
   const crew = state.actors.filter((actor) => actor.alive && actor.level === activeLevel && actor.kind === "crew");
   const assignmentLabel = (member: typeof crew[number]): string => {
-    const assignment = member.crewAssignment ?? { order: "follow" as const, targetId: null };
+    const assignment = member.crewAssignment ?? { order: "follow" as const, targetId: null, targetPosition: null };
     const target = assignment.order === "attack"
       ? state?.actors.find((actor) => actor.alive && actor.id === assignment.targetId)
       : null;
-    return assignment.order === "attack"
-      ? `Attack: ${target?.name ?? "target lost"}`
-      : assignment.order[0]?.toUpperCase() + assignment.order.slice(1);
+    if (assignment.order === "attack") return `Attack: ${target?.name ?? "target lost"}`;
+    if (assignment.order === "rally" && assignment.targetPosition) {
+      return `Rally: ${assignment.targetPosition.x},${assignment.targetPosition.y}`;
+    }
+    return assignment.order[0]?.toUpperCase() + assignment.order.slice(1);
   };
   const activeOrders = new Set(crew.map(assignmentLabel));
   const stanceLabel = (member: typeof crew[number]): string => {
@@ -535,10 +566,11 @@ function renderInterface(): void {
   const onWreck = state.currentLevel === "surface" && player.x === state.wreck.x && player.y === state.wreck.y;
   const atSurf = getInteractionLabel(state) === "Douse in surf";
   contextButton.textContent = activeInspection?.mode === "locked" ? "Done inspecting" : getInteractionLabel(state);
+  crewOrderButton.textContent = activeInspection?.mode === "locked" ? "Rally here" : "Crew order";
   contextButton.classList.toggle("context-ready", onStairs || onWreck || atSurf);
   for (const button of touchActionButtons) {
     button.disabled =
-      activeInspection?.mode === "locked" && button !== contextButton && button !== throwStoneButton ||
+      activeInspection?.mode === "locked" && button !== contextButton && button !== throwStoneButton && button !== crewOrderButton ||
       button === pitchShotButton && !state.recoveredParts.pitch;
   }
   throwStoneButton.textContent = activeInspection?.mode === "locked" ? "Throw here" : "Aim stone";
@@ -638,7 +670,15 @@ function handleAction(action: string): void {
       renderInterface();
     } else commitAction(() => fireFlintlock(state as GameState));
   } else if (action === "pitch-shot") commitAction(() => firePitchShot(state as GameState));
-  else if (action === "order") commitAction(() => cycleCrewOrder(state as GameState));
+  else if (action === "order") {
+    if (inspection?.mode === "locked") {
+      const point = inspection.point;
+      const previousTurn = state.turn;
+      commitAction(() => commandCrewRally(state as GameState, point));
+      if (state.turn > previousTurn) inspection = null;
+      renderInterface();
+    } else commitAction(() => cycleCrewOrder(state as GameState));
+  }
   else if (action === "stance") commitAction(() => cycleCrewStance(state as GameState));
   else if (action === "transfer-firearm") commitAction(() => transferFirearm(state as GameState));
   else if (action === "transfer-melee") commitAction(() => transferMeleeWeapon(state as GameState));
@@ -780,6 +820,11 @@ document.addEventListener("keydown", (event) => {
     if (event.key.toLowerCase() === "t") {
       event.preventDefault();
       handleAction("throw-stone");
+      return;
+    }
+    if (event.key.toLowerCase() === "c") {
+      event.preventDefault();
+      handleAction("order");
       return;
     }
     if (

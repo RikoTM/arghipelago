@@ -7,7 +7,7 @@ The first playable prototype includes:
 - Seeded procedural island generation, a readable wreck-to-cave trail, guaranteed surface landmarks, and fog of war.
 - Eight-direction turn-based movement and melee bump attacks.
 - A flintlock with targeting, noise, ammunition, and reloading.
-- Three recruitable crew members with spatially delivered orders and close, ranged, and avoid stances.
+- Three recruitable crew members with audible positional rally orders and close, ranged, and avoid stances.
 - Per-actor melee and ranged loadouts with adjacent equipment transfer.
 - Persistent ground firearms with deliberate pickup and dropping.
 - Melee weapon damage properties and a discoverable boarding axe.
@@ -65,7 +65,7 @@ Tests exercise deterministic game creation and validate connected procedural ter
 - `D`: make a deliberate noise to lure nearby enemies
 - `P`: fire a pitch-soaked shot after recovering the pitch barrel
 - `T`: enter inspection mode or throw a stone at the selected visible tile
-- `C`: cycle crew orders
+- `C`: cycle crew orders; while inspecting, rally audible crew to the selected known tile
 - `V`: cycle crew combat stances
 - `I`: open the keyboard-accessible equipment menu for adjacent trades and drops
 - `A`: order crew to attack the selected target
