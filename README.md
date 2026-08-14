@@ -12,6 +12,7 @@ The first playable prototype includes:
 - Persistent ground firearms with deliberate pickup and dropping.
 - Melee weapon damage properties and a discoverable boarding axe.
 - Deterministic enemy loot: bonegunners drop firearms, while skeletons and crabs may drop supplies or blades.
+- Bonegunners telegraph dry-powder openings by spending a turn reloading after each shot.
 - Leather and breastplate armor with physical damage reduction and ironclad enemy drops.
 - Armed crew fire and reload from party shot, with gunners receiving better accuracy.
 - Seeded crew traits with hazard, blast, and rescue reactions.

@@ -139,7 +139,7 @@ const ENEMY_TACTICS: Record<EnemyType, string> = {
   skeleton: "a relentless melee pursuer",
   crab: "an ambusher that hides until approached",
   slag: "bursts into damaging embers when slain",
-  bonegunner: "a ranged attacker that retreats from close combat",
+  bonegunner: "fires a flintlock, spends a turn reloading, and retreats from close combat",
 };
 
 const ENEMY_ATTRIBUTE_DETAILS: Record<EnemyAttribute, string> = {
@@ -249,7 +249,11 @@ function loadSave(): GameState | null {
           (actor.armor !== null && !["leatherCoat", "breastplate"].includes(actor.armor)) ||
           typeof actor.rangedLoaded !== "boolean" ||
           (actor.rangedWeapon === null && actor.rangedLoaded) ||
-          (actor.kind === "enemy" && (actor.meleeWeapon !== null || actor.rangedWeapon !== null || actor.armor !== null)) ||
+          (actor.kind === "enemy" &&
+            (actor.meleeWeapon !== null ||
+              actor.armor !== null ||
+              (actor.rangedWeapon !== null &&
+                (actor.enemyType !== "bonegunner" || actor.rangedWeapon !== "flintlock")))) ||
           (actor.crewAssignment != null &&
             (!["follow", "hold", "rally", "attack"].includes(actor.crewAssignment.order) ||
               actor.crewAssignment.order === "attack" && !Number.isInteger(actor.crewAssignment.targetId) ||
@@ -291,7 +295,14 @@ function loadSave(): GameState | null {
       !parsed.recoveredParts ||
       !parsed.repairs
     ) return null;
-    return parsed as GameState;
+    const restored = parsed as GameState;
+    for (const actor of restored.actors) {
+      if (actor.kind === "enemy" && actor.enemyType === "bonegunner" && actor.rangedWeapon === null) {
+        actor.rangedWeapon = "flintlock";
+        actor.rangedLoaded = false;
+      }
+    }
+    return restored;
   } catch {
     return null;
   }
@@ -350,8 +361,11 @@ function inspectionDescription(result: MapInspection): string {
       const behavior = awareness
         ? `${awareness.mode} ${targetLabel} at ${awareness.lastKnownPosition.x},${awareness.lastKnownPosition.y} until turn ${awareness.expiresAtTurn}`
         : "unaware";
+      const firearm = actor.rangedWeapon
+        ? `, ${actor.rangedWeapon} ${isWet(state as GameState, actor) ? "damp" : actor.rangedLoaded ? "loaded" : "empty"}`
+        : "";
       const attribute = actor.enemyAttribute ? `, ${ENEMY_ATTRIBUTE_DETAILS[actor.enemyAttribute]}` : "";
-      details.push(`${actor.name}, ${getFaction(actor)}, ${behavior}, ${actor.hp}/${actor.maxHp} vigor, ${tactic}${attribute}`);
+      details.push(`${actor.name}, ${getFaction(actor)}, ${behavior}, ${actor.hp}/${actor.maxHp} vigor, ${tactic}${firearm}${attribute}`);
     }
     if (actor.kind !== "enemy") {
       const melee = actor.meleeWeapon === "boardingAxe" ? "boarding axe" : actor.meleeWeapon ?? "unarmed";

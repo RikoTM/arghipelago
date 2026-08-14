@@ -53,6 +53,34 @@ function pursue(actor: Actor, target: Actor, expiresAtTurn = 100): void {
   };
 }
 
+function prepareBonegunnerDuel(seed: string): {
+  state: ReturnType<typeof createGame>;
+  player: Actor;
+  gunner: Actor;
+} {
+  const state = createGame(captain, seed);
+  const player = getCaptain(state);
+  const gunner = state.actors.find((actor) => actor.enemyType === "bonegunner" && actor.level === "surface");
+  if (!gunner) throw new Error("Expected a surface bonegunner.");
+  state.actors.filter((actor) => actor.id !== player.id && actor.id !== gunner.id).forEach((actor) => {
+    actor.alive = false;
+  });
+  for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+  state.environment.surface = [];
+  state.surfaceWeather = { phase: "fair", transitionTurn: 1_000, cycle: 0 };
+  player.x = 20;
+  player.y = 20;
+  player.hp = 30;
+  player.maxHp = 30;
+  gunner.x = 25;
+  gunner.y = 20;
+  gunner.enemyAttribute = null;
+  gunner.wetUntilTurn = 0;
+  pursue(gunner, player);
+  updateVisibility(state);
+  return { state, player, gunner };
+}
+
 function routeTo(
   tiles: ReturnType<typeof generateIsland>["tiles"],
   width: number,
@@ -157,6 +185,16 @@ describe("game simulation", () => {
     expect(carpenter).toMatchObject({ meleeWeapon: "cutlass", rangedWeapon: null, rangedLoaded: false, armor: null });
     expect(surgeon).toMatchObject({ meleeWeapon: "knife", rangedWeapon: null, rangedLoaded: false, armor: null });
     expect(gunner).toMatchObject({ meleeWeapon: "cutlass", rangedWeapon: "pistol", rangedLoaded: true, armor: null });
+  });
+
+  it("starts and serializes bonegunners with loaded flintlocks", () => {
+    const state = createGame(captain, "bonegunner-loadouts");
+    const bonegunners = state.actors.filter((actor) => actor.enemyType === "bonegunner");
+    expect(bonegunners.length).toBeGreaterThan(0);
+    expect(bonegunners.every((actor) => actor.rangedWeapon === "flintlock" && actor.rangedLoaded)).toBe(true);
+
+    const restored = JSON.parse(JSON.stringify(state)) as typeof state;
+    expect(restored.actors.filter((actor) => actor.enemyType === "bonegunner")).toEqual(bonegunners);
   });
 
   it("leaves generated firearms on the ground until deliberately picked up", () => {
@@ -2325,6 +2363,54 @@ describe("game simulation", () => {
 
     expect(Math.max(Math.abs(gunner.x - player.x), Math.abs(gunner.y - player.y))).toBe(2);
     expect(player.hp).toBe(player.maxHp);
+  });
+
+  it("has bonegunners spend a dry action reloading between shots", () => {
+    const { state, player, gunner } = prepareBonegunnerDuel("bonegunner-reload-cadence");
+
+    waitTurn(state);
+
+    expect(gunner.rangedLoaded).toBe(false);
+    const smokeAfterShot = environmentAt(state, "surface", gunner)?.smokeTurns ?? 0;
+    expect(smokeAfterShot).toBeGreaterThan(0);
+    const hpAfterShot = player.hp;
+    const rngAfterShot = state.rngState;
+    const messageCountAfterShot = state.messages.length;
+
+    waitTurn(state);
+
+    expect(gunner.rangedLoaded).toBe(true);
+    expect(player.hp).toBe(hpAfterShot);
+    expect(state.rngState).toBe(rngAfterShot);
+    expect(state.messages.slice(messageCountAfterShot)).toContain(`${gunner.name} reloads a flintlock.`);
+    expect(environmentAt(state, "surface", gunner)?.smokeTurns ?? 0).toBeLessThan(smokeAfterShot);
+
+    state.environment.surface = [];
+    waitTurn(state);
+
+    expect(gunner.rangedLoaded).toBe(false);
+    expect(environmentAt(state, "surface", gunner)?.smokeTurns ?? 0).toBeGreaterThan(0);
+  });
+
+  it("prevents wet bonegunners from firing or reloading", () => {
+    const reloadDuel = prepareBonegunnerDuel("wet-bonegunner-reload");
+    reloadDuel.gunner.rangedLoaded = false;
+    reloadDuel.gunner.wetUntilTurn = 100;
+
+    waitTurn(reloadDuel.state);
+
+    expect(reloadDuel.gunner.rangedLoaded).toBe(false);
+    expect(reloadDuel.player.hp).toBe(reloadDuel.player.maxHp);
+    expect(reloadDuel.state.messages.some((message) => message.includes(`${reloadDuel.gunner.name} reloads`))).toBe(false);
+
+    const firingDuel = prepareBonegunnerDuel("wet-bonegunner-shot");
+    firingDuel.gunner.wetUntilTurn = 100;
+
+    waitTurn(firingDuel.state);
+
+    expect(firingDuel.gunner.rangedLoaded).toBe(true);
+    expect(firingDuel.player.hp).toBe(firingDuel.player.maxHp);
+    expect(environmentAt(firingDuel.state, "surface", firingDuel.gunner)).toBeNull();
   });
 
   it("has slain bonegunners deterministically drop an unloaded flintlock and possible shot", () => {

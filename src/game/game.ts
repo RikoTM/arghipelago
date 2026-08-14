@@ -386,8 +386,8 @@ function makeEnemy(id: number, type: EnemyType, point: Point, rng: Rng, level: L
     crewAssignment: null,
     crewStance: null,
     meleeWeapon: null,
-    rangedWeapon: null,
-    rangedLoaded: false,
+    rangedWeapon: type === "bonegunner" ? "flintlock" : null,
+    rangedLoaded: type === "bonegunner",
     armor: null,
     crewReaction: null,
     reactionCooldownUntilTurn: 0,
@@ -1401,6 +1401,12 @@ function runEnemyTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
     const awareness = enemy.enemyAwareness;
     if (!awareness) continue;
 
+    if (enemy.enemyType === "bonegunner" && enemy.rangedWeapon && !enemy.rangedLoaded && !isWet(state, enemy)) {
+      enemy.rangedLoaded = true;
+      addMessage(state, `${enemy.name} reloads a flintlock.`);
+      continue;
+    }
+
     if (!target) {
       const destinationOccupied = Boolean(actorAt(
         state,
@@ -1431,7 +1437,15 @@ function runEnemyTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
       continue;
     }
 
-    if (enemy.enemyType === "bonegunner" && !isWet(state, enemy) && distance(enemy, target) <= 5 && hasLineOfSight(state, enemy, target)) {
+    if (
+      enemy.enemyType === "bonegunner" &&
+      enemy.rangedWeapon &&
+      enemy.rangedLoaded &&
+      !isWet(state, enemy) &&
+      distance(enemy, target) <= 5 &&
+      hasLineOfSight(state, enemy, target)
+    ) {
+      enemy.rangedLoaded = false;
       sounds.push(makeSound("gunfire", enemy));
       addMuzzleSmoke(state, enemy);
       if (rng.chance(0.65)) {
