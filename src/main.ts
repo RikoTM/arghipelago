@@ -9,11 +9,13 @@ import {
   cycleCrewOrder,
   cycleCrewStance,
   cycleTarget,
+  dropArmor,
   dropFirearm,
   dropMeleeWeapon,
   fireFlintlock,
   firePitchShot,
   getCaptain,
+  getArmorTransferLabel,
   getCurrentMap,
   getFaction,
   getFirearmTransferLabel,
@@ -30,6 +32,7 @@ import {
   throwStone,
   transferFirearm,
   transferMeleeWeapon,
+  transferArmor,
   useStairs,
   useSmellingSalts,
   waitTurn,
@@ -51,7 +54,7 @@ import type {
 } from "./game/types";
 import { createRenderer, getMapCamera, moveInspectionCursor, worldPointFromClient } from "./render";
 
-const SAVE_KEY = "arghipelago.active-run.v18";
+const SAVE_KEY = "arghipelago.active-run.v19";
 
 function requireElement<T extends HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -89,8 +92,10 @@ const pitchShotButton = requireElement<HTMLButtonElement>("#pitch-shot-button");
 const throwStoneButton = requireElement<HTMLButtonElement>("#throw-stone-button");
 const transferFirearmButton = requireElement<HTMLButtonElement>("#transfer-firearm-button");
 const transferMeleeButton = requireElement<HTMLButtonElement>("#transfer-melee-button");
+const transferArmorButton = requireElement<HTMLButtonElement>("#transfer-armor-button");
 const dropFirearmButton = requireElement<HTMLButtonElement>("#drop-firearm-button");
 const dropMeleeButton = requireElement<HTMLButtonElement>("#drop-melee-button");
+const dropArmorButton = requireElement<HTMLButtonElement>("#drop-armor-button");
 const contextButton = requireElement<HTMLButtonElement>("#context-button");
 const controlsHelp = requireElement<HTMLDetailsElement>(".controls-help");
 const inspectionReadout = requireElement<HTMLElement>("#inspection-readout");
@@ -125,6 +130,8 @@ const PICKUP_DETAILS = {
   cutlass: "cutlass, +1 melee damage",
   knife: "rigging knife, +0 melee damage",
   boardingAxe: "boarding axe, +2 melee damage",
+  leatherCoat: "leather coat, reduces melee damage by 1",
+  breastplate: "breastplate, reduces melee damage by 1 and firearm damage by 2",
 } as const;
 
 const ENEMY_TACTICS: Record<EnemyType, string> = {
@@ -169,7 +176,7 @@ function loadSave(): GameState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GameState>;
     if (
-      parsed.version !== 18 ||
+      parsed.version !== 19 ||
       !parsed.levels?.surface ||
       !parsed.levels.cave ||
       !parsed.environment?.surface ||
@@ -238,10 +245,10 @@ function loadSave(): GameState | null {
           (actor.kind !== "crew" && actor.kind !== "castaway" && actor.crewStance !== null) ||
           (actor.meleeWeapon !== null && !["cutlass", "knife", "boardingAxe"].includes(actor.meleeWeapon)) ||
           (actor.rangedWeapon !== null && !["flintlock", "pistol"].includes(actor.rangedWeapon)) ||
+          (actor.armor !== null && !["leatherCoat", "breastplate"].includes(actor.armor)) ||
           typeof actor.rangedLoaded !== "boolean" ||
           (actor.rangedWeapon === null && actor.rangedLoaded) ||
-          (actor.kind === "enemy" && (actor.meleeWeapon !== null || actor.rangedWeapon !== null)) ||
-          (actor.kind !== "enemy" && actor.meleeWeapon === null) ||
+          (actor.kind === "enemy" && (actor.meleeWeapon !== null || actor.rangedWeapon !== null || actor.armor !== null)) ||
           (actor.crewAssignment != null &&
             (!["follow", "hold", "rally", "attack"].includes(actor.crewAssignment.order) ||
               actor.crewAssignment.order === "attack" && !Number.isInteger(actor.crewAssignment.targetId) ||
@@ -264,7 +271,7 @@ function loadSave(): GameState | null {
         const map = pickup.level === "surface" || pickup.level === "cave" ? parsed.levels?.[pickup.level] : null;
         const firearm = pickup.type === "flintlock" || pickup.type === "pistol";
         return !map ||
-          !["mast", "canvas", "pitch", "ammo", "salts", "flintlock", "pistol", "cutlass", "knife", "boardingAxe"].includes(pickup.type) ||
+          !["mast", "canvas", "pitch", "ammo", "salts", "flintlock", "pistol", "cutlass", "knife", "boardingAxe", "leatherCoat", "breastplate"].includes(pickup.type) ||
           !Number.isInteger(pickup.x) ||
           !Number.isInteger(pickup.y) ||
           pickup.x < 0 ||
@@ -350,7 +357,8 @@ function inspectionDescription(result: MapInspection): string {
       const ranged = actor.rangedWeapon
         ? `${actor.rangedWeapon}, ${actor.rangedLoaded ? "loaded" : "empty"}`
         : "no firearm";
-      details.push(`${actor.name} carries ${melee}; ${ranged}`);
+      const armor = actor.armor === "leatherCoat" ? "leather coat" : actor.armor ?? "no armor";
+      details.push(`${actor.name} carries ${melee}; ${ranged}; ${armor}`);
     }
     if (isWet(state as GameState, actor)) details.push(`${actor.name} is wet; firearms and fire behave differently`);
   }
@@ -420,10 +428,13 @@ function renderInterface(): void {
   const rangedWeapon = player.rangedWeapon
     ? `${player.rangedWeapon.replace(/^./, (letter) => letter.toUpperCase())}: ${isWet(state, player) ? "damp" : player.rangedLoaded ? "loaded" : "empty"}`
     : "No firearm";
+  const armor = player.armor === "leatherCoat"
+    ? "Leather coat"
+    : player.armor ? "Breastplate" : "No armor";
   captainStats.innerHTML = `
     <div class="health-line"><span>VIGOR</span><strong>${healthPips(player.hp, player.maxHp)}</strong><span>${player.hp}/${player.maxHp}</span></div>
     <div class="equipment-line"><span>${meleeWeapon}</span><span>${rangedWeapon}</span></div>
-    <div class="equipment-line"><span>Shot: ${state.inventory.ammo}</span><span>Salts: ${state.inventory.salts}</span></div>
+    <div class="equipment-line"><span>${armor}</span><span>Shot: ${state.inventory.ammo} / Salts: ${state.inventory.salts}</span></div>
     <div class="seed-line">Chart: ${escapeHtml(state.seed)} / ${state.currentLevel === "surface" ? `Island / ${state.surfaceWeather.phase === "rain" ? "Heavy rain" : state.surfaceWeather.phase === "squallWarning" ? "Squall building" : "Fair"}` : "Cave / Sheltered underground"}</div>
   `;
   turnCount.textContent = `Turn ${state.turn}`;
@@ -470,7 +481,8 @@ function renderInterface(): void {
               : `${member.hp}/${member.maxHp} vigor${isWet(state as GameState, member) ? " / Wet" : ""}`;
             const trait = member.crewTrait ? CREW_TRAIT_DETAILS[member.crewTrait].split(":")[0] : "Unremarkable";
             const reaction = member.crewReaction === "brace" ? " / Bracing" : "";
-            return `<div class="crew-row ${isIncapacitated(member) ? "incapacitated" : ""}"><strong>${escapeHtml(member.name)}</strong><span>${escapeHtml(member.role ?? "Pirate")} / ${trait}</span><span>${status}${reaction} / ${escapeHtml(assignmentLabel(member))} / ${escapeHtml(stanceLabel(member))}</span></div>`;
+            const armor = member.armor === "leatherCoat" ? "Leather coat" : member.armor ? "Breastplate" : "No armor";
+            return `<div class="crew-row ${isIncapacitated(member) ? "incapacitated" : ""}"><strong>${escapeHtml(member.name)}</strong><span>${escapeHtml(member.role ?? "Pirate")} / ${trait}</span><span>${status}${reaction} / ${escapeHtml(assignmentLabel(member))} / ${escapeHtml(stanceLabel(member))} / ${armor}</span></div>`;
           },
         )
         .join("")
@@ -487,9 +499,12 @@ function renderInterface(): void {
   pitchShotButton.disabled = !state.recoveredParts.pitch;
   transferFirearmButton.textContent = getFirearmTransferLabel(state);
   transferMeleeButton.textContent = getMeleeTransferLabel(state);
+  transferArmorButton.textContent = getArmorTransferLabel(state);
   dropFirearmButton.textContent = player.rangedWeapon ? `Drop ${player.rangedWeapon}` : "No firearm to drop";
   const meleeLabel = player.meleeWeapon === "boardingAxe" ? "boarding axe" : player.meleeWeapon;
   dropMeleeButton.textContent = meleeLabel ? `Drop ${meleeLabel}` : "No blade to drop";
+  const armorLabel = player.armor === "leatherCoat" ? "leather coat" : player.armor;
+  dropArmorButton.textContent = armorLabel ? `Drop ${armorLabel}` : "No armor to drop";
   const onStairs =
     (state.currentLevel === "surface" && player.x === state.caveEntrance.x && player.y === state.caveEntrance.y) ||
     (state.currentLevel === "cave" && player.x === state.caveExit.x && player.y === state.caveExit.y);
@@ -586,8 +601,10 @@ function handleAction(action: string): void {
   else if (action === "stance") commitAction(() => cycleCrewStance(state as GameState));
   else if (action === "transfer-firearm") commitAction(() => transferFirearm(state as GameState));
   else if (action === "transfer-melee") commitAction(() => transferMeleeWeapon(state as GameState));
+  else if (action === "transfer-armor") commitAction(() => transferArmor(state as GameState));
   else if (action === "drop-firearm") commitAction(() => dropFirearm(state as GameState));
   else if (action === "drop-melee") commitAction(() => dropMeleeWeapon(state as GameState));
+  else if (action === "drop-armor") commitAction(() => dropArmor(state as GameState));
   else if (action === "crew-attack") commitAction(() => commandCrewAttack(state as GameState));
   else if (action === "interact") commitAction(() => interact(state as GameState));
 }
@@ -722,8 +739,10 @@ document.addEventListener("keydown", (event) => {
   else if (event.key.toLowerCase() === "v") handleAction("stance");
   else if (event.key.toLowerCase() === "i") handleAction("transfer-firearm");
   else if (event.key.toLowerCase() === "o") handleAction("transfer-melee");
+  else if (event.key.toLowerCase() === "w") handleAction("transfer-armor");
   else if (event.key.toLowerCase() === "g") handleAction("drop-firearm");
   else if (event.key.toLowerCase() === "q") handleAction("drop-melee");
+  else if (event.key.toLowerCase() === "z") handleAction("drop-armor");
   else if (event.key === "Tab") {
     event.preventDefault();
     handleAction("target-next");

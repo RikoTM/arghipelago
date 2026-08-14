@@ -320,6 +320,25 @@ function drawPickup(context: CanvasRenderingContext2D, type: PickupType): void {
     context.strokeRect(9, 8, 14, 20);
     inkLine(context, [[9, 13], [23, 13]], 1);
     inkLine(context, [[9, 23], [23, 23]], 1);
+  } else if (type === "leatherCoat" || type === "breastplate") {
+    context.beginPath();
+    context.moveTo(9, 7);
+    context.lineTo(16, 10);
+    context.lineTo(23, 7);
+    context.lineTo(27, 25);
+    context.lineTo(21, 29);
+    context.lineTo(11, 29);
+    context.lineTo(5, 25);
+    context.closePath();
+    context.fill();
+    context.stroke();
+    if (type === "breastplate") {
+      inkLine(context, [[10, 13], [22, 13], [24, 24], [16, 27], [8, 24], [10, 13]], 2);
+      hatch(context, 5, INK, true);
+    } else {
+      inkLine(context, [[9, 14], [23, 20]], 1);
+      inkLine(context, [[8, 22], [21, 27]], 1);
+    }
   } else if (type === "cutlass" || type === "knife" || type === "boardingAxe") {
     if (type === "boardingAxe") {
       inkLine(context, [[8, 29], [20, 8]], 3);

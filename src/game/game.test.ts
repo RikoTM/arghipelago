@@ -5,12 +5,14 @@ import {
   createGame,
   cycleCrewOrder,
   cycleCrewStance,
+  dropArmor,
   dropFirearm,
   dropMeleeWeapon,
   fireFlintlock,
   environmentAt,
   firePitchShot,
   getCaptain,
+  getArmorTransferLabel,
   getFaction,
   getMeleeTransferLabel,
   getInteractionLabel,
@@ -25,6 +27,7 @@ import {
   throwStone,
   transferFirearm,
   transferMeleeWeapon,
+  transferArmor,
   updateVisibility,
   useSmellingSalts,
   useStairs,
@@ -114,6 +117,7 @@ describe("island generation", () => {
       expect(state.pickups.find((pickup) => pickup.type === "pitch")?.level).toBe("cave");
       expect(state.pickups.filter((pickup) => pickup.type === "pistol")).toHaveLength(1);
       expect(state.pickups.filter((pickup) => pickup.type === "boardingAxe")).toHaveLength(1);
+      expect(state.pickups.filter((pickup) => pickup.type === "leatherCoat")).toHaveLength(1);
       expect(state.actors.filter((actor) => actor.kind === "castaway")).toHaveLength(3);
     }
   });
@@ -149,10 +153,10 @@ describe("game simulation", () => {
     const surgeon = state.actors.find((actor) => actor.role?.startsWith("Surgeon"));
     const gunner = state.actors.find((actor) => actor.role?.startsWith("Gunner"));
 
-    expect(player).toMatchObject({ meleeWeapon: "cutlass", rangedWeapon: "flintlock", rangedLoaded: true });
-    expect(carpenter).toMatchObject({ meleeWeapon: "cutlass", rangedWeapon: null, rangedLoaded: false });
-    expect(surgeon).toMatchObject({ meleeWeapon: "knife", rangedWeapon: null, rangedLoaded: false });
-    expect(gunner).toMatchObject({ meleeWeapon: "cutlass", rangedWeapon: "pistol", rangedLoaded: true });
+    expect(player).toMatchObject({ meleeWeapon: "cutlass", rangedWeapon: "flintlock", rangedLoaded: true, armor: null });
+    expect(carpenter).toMatchObject({ meleeWeapon: "cutlass", rangedWeapon: null, rangedLoaded: false, armor: null });
+    expect(surgeon).toMatchObject({ meleeWeapon: "knife", rangedWeapon: null, rangedLoaded: false, armor: null });
+    expect(gunner).toMatchObject({ meleeWeapon: "cutlass", rangedWeapon: "pistol", rangedLoaded: true, armor: null });
   });
 
   it("leaves generated firearms on the ground until deliberately picked up", () => {
@@ -234,10 +238,40 @@ describe("game simulation", () => {
     expect(dropped?.collected).toBe(true);
   });
 
+  it("deliberately equips, drops, and retrieves generated armor", () => {
+    const state = createGame(captain, "ground-leather-coat");
+    const player = getCaptain(state);
+    const coat = state.pickups.find((pickup) => pickup.type === "leatherCoat");
+    expect(coat).toBeDefined();
+    if (!coat) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    player.x = coat.x;
+    player.y = coat.y;
+
+    waitTurn(state);
+    expect(coat.collected).toBe(false);
+    expect(getInteractionLabel(state)).toBe("Pick up leather coat");
+    expect(interact(state)).toBe(true);
+    expect(player.armor).toBe("leatherCoat");
+    expect(coat.collected).toBe(true);
+
+    expect(dropArmor(state)).toBe(true);
+    const dropped = state.pickups.find(
+      (pickup) => !pickup.collected && pickup.type === "leatherCoat" && pickup.x === player.x && pickup.y === player.y,
+    );
+    expect(dropped).toMatchObject({ loaded: false, level: "surface" });
+    expect(player.armor).toBeNull();
+    expect(getInteractionLabel(state)).toBe("Pick up leather coat");
+
+    expect(interact(state)).toBe(true);
+    expect(player.armor).toBe("leatherCoat");
+    expect(dropped?.collected).toBe(true);
+  });
+
   it("round-trips the complete active run through JSON storage", () => {
     const state = createGame(captain, "save-round-trip");
     const restored = JSON.parse(JSON.stringify(state)) as typeof state;
-    expect(restored.version).toBe(18);
+    expect(restored.version).toBe(19);
     expect(restored.environment).toEqual({ surface: [], cave: [] });
     expect(restored.surfaceWeather.phase).toBe("fair");
     expect(restored).toEqual(state);
@@ -1198,6 +1232,72 @@ describe("game simulation", () => {
     expect(axeTarget.hp).toBe(cutlassTarget.hp - 1);
   });
 
+  it("applies armor-specific melee and projectile damage reduction", () => {
+    const meleeOpen = createGame(captain, "melee-armor");
+    const meleeArmored = createGame(captain, "melee-armor");
+    const prepareMelee = (state: ReturnType<typeof createGame>, armored: boolean): Actor | null => {
+      const player = getCaptain(state);
+      const enemy = state.actors.find(
+        (actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType === "skeleton",
+      );
+      if (!enemy) return null;
+      state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== enemy.id).forEach((actor) => {
+        actor.alive = false;
+      });
+      for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+      player.x = 20;
+      player.y = 20;
+      player.armor = armored ? "leatherCoat" : null;
+      enemy.x = 21;
+      enemy.y = 20;
+      enemy.melee = 3;
+      enemy.enemyAttribute = null;
+      state.rngState = 1;
+      pursue(enemy, player);
+      waitTurn(state);
+      return player;
+    };
+    const openMeleeTarget = prepareMelee(meleeOpen, false);
+    const armoredMeleeTarget = prepareMelee(meleeArmored, true);
+    expect(openMeleeTarget).not.toBeNull();
+    expect(armoredMeleeTarget).not.toBeNull();
+    if (!openMeleeTarget || !armoredMeleeTarget) return;
+    expect(armoredMeleeTarget.hp).toBe(openMeleeTarget.hp + 1);
+
+    const shotOpen = createGame(captain, "projectile-armor");
+    const shotLeather = createGame(captain, "projectile-armor");
+    const shotPlate = createGame(captain, "projectile-armor");
+    const prepareShot = (state: ReturnType<typeof createGame>, armor: "leatherCoat" | "breastplate" | null): Actor | null => {
+      const player = getCaptain(state);
+      const gunner = state.actors.find((actor) => actor.enemyType === "bonegunner" && actor.level === "surface");
+      if (!gunner) return null;
+      state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== gunner.id).forEach((actor) => {
+        actor.alive = false;
+      });
+      for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+      player.x = 20;
+      player.y = 20;
+      player.armor = armor;
+      gunner.x = 25;
+      gunner.y = 20;
+      gunner.enemyAttribute = null;
+      state.rngState = 1;
+      pursue(gunner, player);
+      waitTurn(state);
+      return player;
+    };
+    const openShotTarget = prepareShot(shotOpen, null);
+    const leatherShotTarget = prepareShot(shotLeather, "leatherCoat");
+    const plateShotTarget = prepareShot(shotPlate, "breastplate");
+    expect(openShotTarget).not.toBeNull();
+    expect(leatherShotTarget).not.toBeNull();
+    expect(plateShotTarget).not.toBeNull();
+    if (!openShotTarget || !leatherShotTarget || !plateShotTarget) return;
+    expect(leatherShotTarget.hp).toBe(openShotTarget.hp);
+    expect(plateShotTarget.hp).toBe(openShotTarget.hp + 1);
+    expect(shotPlate.messages.some((message) => message.includes("breastplate absorbs"))).toBe(true);
+  });
+
   it("adds melee damage when a same-faction ally is exactly opposite the target", () => {
     const open = createGame({ ...captain, knack: "deadeye" }, "party-flanking");
     const flanked = createGame({ ...captain, knack: "deadeye" }, "party-flanking");
@@ -1736,11 +1836,43 @@ describe("game simulation", () => {
     expect(state.turn).toBe(2);
   });
 
+  it("swaps armor with adjacent crew and recovers it from a casualty", () => {
+    const state = createGame(captain, "armor-handoff");
+    const player = getCaptain(state);
+    const crew = state.actors.find((actor) => actor.kind === "castaway");
+    expect(crew).toBeDefined();
+    if (!crew) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    player.x = 20;
+    player.y = 20;
+    player.armor = "breastplate";
+    crew.kind = "crew";
+    crew.crewAssignment = { order: "follow", targetId: null };
+    crew.armor = "leatherCoat";
+    crew.x = 21;
+    crew.y = 20;
+
+    expect(getArmorTransferLabel(state)).toBe(`Swap for leather coat with ${crew.name}`);
+    expect(transferArmor(state)).toBe(true);
+    expect(player.armor).toBe("leatherCoat");
+    expect(crew.armor).toBe("breastplate");
+    expect(state.turn).toBe(1);
+
+    player.armor = null;
+    crew.alive = false;
+    expect(getArmorTransferLabel(state)).toBe(`Retrieve breastplate from ${crew.name}`);
+    expect(transferArmor(state)).toBe(true);
+    expect(player.armor).toBe("breastplate");
+    expect(crew.armor).toBeNull();
+    expect(state.turn).toBe(2);
+  });
+
   it("does not spend a turn transferring equipment without adjacent crew", () => {
     const state = createGame(captain, "lonely-equipment-manager");
 
     expect(transferFirearm(state)).toBe(false);
     expect(transferMeleeWeapon(state)).toBe(false);
+    expect(transferArmor(state)).toBe(false);
     expect(state.turn).toBe(0);
     expect(getCaptain(state).rangedWeapon).toBe("flintlock");
   });
@@ -2226,6 +2358,37 @@ describe("game simulation", () => {
     expect(firstDrops).toEqual(secondDrops);
     expect(firstDrops).toContainEqual(expect.objectContaining({ type: "flintlock", loaded: false }));
     expect(first.messages.some((message) => message.includes("drops a weathered flintlock"))).toBe(true);
+  });
+
+  it("recovers a breastplate from a slain ironclad enemy", () => {
+    const state = createGame(captain, "ironclad-armor-loot");
+    const player = getCaptain(state);
+    const enemy = state.actors.find(
+      (actor) => actor.enemyType === "skeleton" && actor.level === "surface",
+    );
+    expect(enemy).toBeDefined();
+    if (!enemy) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== enemy.id).forEach((actor) => {
+      actor.alive = false;
+    });
+    state.pickups.forEach((pickup) => { pickup.collected = true; });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    enemy.x = 21;
+    enemy.y = 20;
+    enemy.hp = 1;
+    enemy.enemyAttribute = "ironclad";
+    enemy.enemyAwareness = null;
+
+    moveCaptain(state, 1, 0);
+
+    expect(state.pickups).toContainEqual(expect.objectContaining({
+      type: "breastplate",
+      x: enemy.x,
+      y: enemy.y,
+      collected: false,
+    }));
   });
 
   it("leaves no loot behind when a volatile slag bursts", () => {

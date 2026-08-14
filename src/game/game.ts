@@ -1,6 +1,7 @@
 import { coordinateNoise, Rng } from "./rng";
 import type {
   Actor,
+  ArmorType,
   CaptainConfig,
   CrewOrder,
   CrewStance,
@@ -97,12 +98,19 @@ const PICKUP_NAMES: Record<PickupType, string> = {
   cutlass: "a serviceable cutlass",
   knife: "a sharp rigging knife",
   boardingAxe: "a heavy boarding axe",
+  leatherCoat: "a salt-stiffened leather coat",
+  breastplate: "a battered steel breastplate",
 };
 
 const MELEE_WEAPON_DAMAGE: Record<MeleeWeapon, number> = {
   knife: 0,
   cutlass: 1,
   boardingAxe: 2,
+};
+
+const ARMOR_DEFENSE: Record<ArmorType, { melee: number; projectile: number }> = {
+  leatherCoat: { melee: 1, projectile: 0 },
+  breastplate: { melee: 1, projectile: 2 },
 };
 
 const CREW: Array<{
@@ -380,6 +388,7 @@ function makeEnemy(id: number, type: EnemyType, point: Point, rng: Rng, level: L
     meleeWeapon: null,
     rangedWeapon: null,
     rangedLoaded: false,
+    armor: null,
     crewReaction: null,
     reactionCooldownUntilTurn: 0,
     stabilized: false,
@@ -472,6 +481,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       meleeWeapon: "cutlass",
       rangedWeapon: "flintlock",
       rangedLoaded: true,
+      armor: null,
       crewReaction: null,
       reactionCooldownUntilTurn: 0,
       stabilized: false,
@@ -503,6 +513,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       meleeWeapon: recruit.meleeWeapon,
       rangedWeapon: recruit.rangedWeapon,
       rangedLoaded: recruit.rangedWeapon !== null,
+      armor: null,
       crewReaction: null,
       reactionCooldownUntilTurn: 0,
       stabilized: false,
@@ -521,7 +532,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
     nextId += 1;
   }
 
-  const pickupTypes: PickupType[] = ["mast", "canvas", "ammo", "ammo", "salts", "pistol", "boardingAxe"];
+  const pickupTypes: PickupType[] = ["mast", "canvas", "ammo", "ammo", "salts", "pistol", "boardingAxe", "leatherCoat"];
   for (const [index, type] of pickupTypes.entries()) {
     const minimumDistance = index < 2 ? 13 + index * 2 : 7;
     const point = takePlacement(pool, rng, (candidate) => distance(candidate, island.wreck) > minimumDistance);
@@ -576,7 +587,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
   assignCrewTraits(seed, actors);
 
   const state: GameState = {
-    version: 18,
+    version: 19,
     seed,
     rngState: rng.state,
     levels: {
@@ -742,6 +753,7 @@ function dropEnemyLoot(state: GameState, enemy: Actor): void {
   } else if (enemy.enemyType === "crab" && rng.chance(0.25)) {
     drops.push("salts");
   }
+  if (enemy.enemyAttribute === "ironclad") drops.push("breastplate");
   if (drops.length === 0) return;
   for (const type of drops) addGroundPickup(state, enemy.level, enemy, type);
   addMessage(state, `${enemy.name} drops ${drops.map((type) => PICKUP_NAMES[type]).join(" and ")}.`);
@@ -805,10 +817,28 @@ function terrainCover(state: GameState, target: Actor): number {
   return terrain === "jungle" || terrain === "rock" || terrain === "wreck" ? 1 : 0;
 }
 
+function armorName(armor: ArmorType): string {
+  return armor === "leatherCoat" ? "leather coat" : "breastplate";
+}
+
+function physicalDamageAfterArmor(
+  state: GameState,
+  target: Actor,
+  amount: number,
+  kind: "melee" | "projectile",
+): number {
+  if (!target.armor) return Math.max(1, amount);
+  const damage = Math.max(1, amount - ARMOR_DEFENSE[target.armor][kind]);
+  if (damage < amount) {
+    addMessage(state, `${target.name}'s ${armorName(target.armor)} absorbs ${amount - damage} damage.`);
+  }
+  return damage;
+}
+
 function projectileDamage(state: GameState, target: Actor, amount: number): number {
   const cover = terrainCover(state, target);
   if (cover > 0) addMessage(state, `${target.name}'s terrain cover absorbs part of the shot.`);
-  return Math.max(1, amount - cover);
+  return physicalDamageAfterArmor(state, target, Math.max(1, amount - cover), "projectile");
 }
 
 function hasFlankingAlly(state: GameState, attacker: Actor, target: Actor): boolean {
@@ -836,7 +866,7 @@ function meleeAttack(state: GameState, attacker: Actor, target: Actor, rng: Rng,
   const duelistBonus = attacker.kind === "captain" && state.captainConfig.knack === "duelist" ? 1 : 0;
   const luckyBonus = attacker.kind === "captain" && state.captainConfig.knack === "lucky" && rng.chance(0.25) ? 1 : 0;
   const flankingBonus = hasFlankingAlly(state, attacker, target) ? 1 : 0;
-  const damage = base + duelistBonus + luckyBonus + flankingBonus;
+  const damage = physicalDamageAfterArmor(state, target, base + duelistBonus + luckyBonus + flankingBonus, "melee");
   if (luckyBonus > 0) addMessage(state, "A fortunate wobble improves the captain's attack.");
   if (flankingBonus > 0) addMessage(state, `${attacker.name} flanks ${target.name} with an ally opposite.`);
   damageActor(state, target, damage, { actor: attacker, label: attacker.name }, sounds);
@@ -859,6 +889,10 @@ function isMeleeWeaponPickup(type: PickupType): type is MeleeWeapon {
   return type === "cutlass" || type === "knife" || type === "boardingAxe";
 }
 
+function isArmorPickup(type: PickupType): type is ArmorType {
+  return type === "leatherCoat" || type === "breastplate";
+}
+
 function collectAtCaptain(state: GameState): void {
   const player = captain(state);
   for (const pickup of state.pickups) {
@@ -868,7 +902,7 @@ function collectAtCaptain(state: GameState): void {
       pickup.x !== player.x ||
       pickup.y !== player.y
     ) continue;
-    if (isRangedWeaponPickup(pickup.type) || isMeleeWeaponPickup(pickup.type)) continue;
+    if (isRangedWeaponPickup(pickup.type) || isMeleeWeaponPickup(pickup.type) || isArmorPickup(pickup.type)) continue;
     pickup.collected = true;
     if (pickup.type === "ammo") state.inventory.ammo += 4;
     else if (pickup.type === "salts") state.inventory.salts += 1;
@@ -1714,6 +1748,62 @@ export function transferMeleeWeapon(state: GameState): boolean {
   return true;
 }
 
+function armorTransferTarget(state: GameState): Actor | null {
+  const player = captain(state);
+  const nearbyCrew = nearbyCrewForEquipment(state);
+  if (!player.armor) return nearbyCrew.find((actor) => actor.armor !== null) ?? null;
+  const activeCrew = nearbyCrew.filter(canAct);
+  return activeCrew.find((actor) => actor.armor === null) ??
+    activeCrew.find((actor) => actor.armor !== player.armor) ??
+    null;
+}
+
+export function getArmorTransferLabel(state: GameState): string {
+  const player = captain(state);
+  const crew = armorTransferTarget(state);
+  if (!crew) return "No armor trade";
+  if (!player.armor) return crew.armor ? `Retrieve ${armorName(crew.armor)} from ${crew.name}` : "No armor trade";
+  if (!crew.armor) return `Pass ${armorName(player.armor)} to ${crew.name}`;
+  return `Swap for ${armorName(crew.armor)} with ${crew.name}`;
+}
+
+export function transferArmor(state: GameState): boolean {
+  if (state.phase !== "playing") return false;
+  const player = captain(state);
+  const crew = armorTransferTarget(state);
+  if (!crew) {
+    addMessage(state, "No adjacent crewmate has a useful armor trade.");
+    return false;
+  }
+  if (!player.armor) {
+    const armor = crew.armor;
+    if (!armor) return false;
+    player.armor = armor;
+    crew.armor = null;
+    addMessage(
+      state,
+      crew.alive
+        ? `${crew.name} hands the ${armorName(armor)} to ${player.name}.`
+        : `${player.name} recovers the ${armorName(armor)} from ${crew.name}.`,
+    );
+    finishTurn(state);
+    return true;
+  }
+
+  const captainArmor = player.armor;
+  const crewArmor = crew.armor;
+  crew.armor = captainArmor;
+  player.armor = crewArmor;
+  addMessage(
+    state,
+    crewArmor
+      ? `${player.name} swaps the ${armorName(captainArmor)} for ${crew.name}'s ${armorName(crewArmor)}.`
+      : `${player.name} passes the ${armorName(captainArmor)} to ${crew.name}.`,
+  );
+  finishTurn(state);
+  return true;
+}
+
 function groundFirearmAtCaptain(state: GameState): Pickup | null {
   const player = captain(state);
   return state.pickups.find(
@@ -1738,13 +1828,27 @@ function groundMeleeWeaponAtCaptain(state: GameState): Pickup | null {
   ) ?? null;
 }
 
+function groundArmorAtCaptain(state: GameState): Pickup | null {
+  const player = captain(state);
+  return state.pickups.find(
+    (pickup) =>
+      !pickup.collected &&
+      pickup.level === state.currentLevel &&
+      pickup.x === player.x &&
+      pickup.y === player.y &&
+      isArmorPickup(pickup.type),
+  ) ?? null;
+}
+
 function groundEquipmentForCaptain(state: GameState): Pickup | null {
   const player = captain(state);
   const meleeWeapon = groundMeleeWeaponAtCaptain(state);
   const firearm = groundFirearmAtCaptain(state);
+  const armor = groundArmorAtCaptain(state);
   if (!player.meleeWeapon && meleeWeapon) return meleeWeapon;
   if (!player.rangedWeapon && firearm) return firearm;
-  return firearm ?? meleeWeapon;
+  if (!player.armor && armor) return armor;
+  return firearm ?? meleeWeapon ?? armor;
 }
 
 export function dropFirearm(state: GameState): boolean {
@@ -1794,6 +1898,31 @@ export function dropMeleeWeapon(state: GameState): boolean {
   addGroundPickup(state, state.currentLevel, player, weapon);
   player.meleeWeapon = null;
   addMessage(state, `${player.name} leaves the ${meleeWeaponName(weapon)} on the ground.`);
+  finishTurn(state);
+  return true;
+}
+
+export function dropArmor(state: GameState): boolean {
+  if (state.phase !== "playing") return false;
+  const player = captain(state);
+  if (!player.armor) {
+    addMessage(state, "The captain has no armor to drop.");
+    return false;
+  }
+  if (groundArmorAtCaptain(state)) {
+    addMessage(state, "There is already armor here. This is not a wardrobe.");
+    return false;
+  }
+  const map = currentMap(state);
+  const terrain = map.tiles[tileIndex(player.x, player.y, map.width)]?.terrain;
+  if (terrain === "stairsDown" || terrain === "stairsUp") {
+    addMessage(state, "Armor on the stairs would become architecture.");
+    return false;
+  }
+  const armor = player.armor;
+  addGroundPickup(state, state.currentLevel, player, armor);
+  player.armor = null;
+  addMessage(state, `${player.name} leaves the ${armorName(armor)} on the ground.`);
   finishTurn(state);
   return true;
 }
@@ -2161,6 +2290,9 @@ export function getInteractionLabel(state: GameState): string {
   if (groundEquipment && isMeleeWeaponPickup(groundEquipment.type)) {
     return `Pick up ${meleeWeaponName(groundEquipment.type)}`;
   }
+  if (groundEquipment && isArmorPickup(groundEquipment.type)) {
+    return `Pick up ${armorName(groundEquipment.type)}`;
+  }
   if (isAtWreck(state)) {
     const part = nextRecoveredRepair(state);
     return part ? `Fit ${REPAIR_LABELS[part]}` : "Inspect wreck";
@@ -2196,6 +2328,17 @@ export function interact(state: GameState): boolean {
     player.meleeWeapon = groundEquipment.type;
     groundEquipment.collected = true;
     addMessage(state, `${player.name} picks up ${PICKUP_NAMES[groundEquipment.type]}.`);
+    finishTurn(state);
+    return true;
+  }
+  if (groundEquipment && isArmorPickup(groundEquipment.type)) {
+    if (player.armor) {
+      addMessage(state, `Drop or pass the captain's ${armorName(player.armor)} before picking up other armor.`);
+      return false;
+    }
+    player.armor = groundEquipment.type;
+    groundEquipment.collected = true;
+    addMessage(state, `${player.name} puts on ${PICKUP_NAMES[groundEquipment.type]}.`);
     finishTurn(state);
     return true;
   }

@@ -28,7 +28,8 @@ export type Coat = "crimson" | "navy" | "moss";
 export type RepairPart = "mast" | "canvas" | "pitch";
 export type MeleeWeapon = "cutlass" | "knife" | "boardingAxe";
 export type RangedWeapon = "flintlock" | "pistol";
-export type PickupType = RepairPart | MeleeWeapon | RangedWeapon | "ammo" | "salts";
+export type ArmorType = "leatherCoat" | "breastplate";
+export type PickupType = RepairPart | MeleeWeapon | RangedWeapon | ArmorType | "ammo" | "salts";
 
 export interface Point {
   x: number;
@@ -81,6 +82,7 @@ export interface Actor extends Point {
   meleeWeapon: MeleeWeapon | null;
   rangedWeapon: RangedWeapon | null;
   rangedLoaded: boolean;
+  armor: ArmorType | null;
   crewReaction: CrewReaction;
   reactionCooldownUntilTurn: number;
   stabilized: boolean;
@@ -118,7 +120,7 @@ export interface SurfaceWeather {
 }
 
 export interface GameState {
-  version: 18;
+  version: 19;
   seed: string;
   rngState: number;
   levels: Record<LevelId, MapLevel>;

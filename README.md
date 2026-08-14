@@ -12,6 +12,7 @@ The first playable prototype includes:
 - Persistent ground firearms with deliberate pickup and dropping.
 - Melee weapon damage properties and a discoverable boarding axe.
 - Deterministic enemy loot: bonegunners drop firearms, while skeletons and crabs may drop supplies or blades.
+- Leather and breastplate armor with physical damage reduction and ironclad enemy drops.
 - Armed crew fire and reload from party shot, with gunners receiving better accuracy.
 - Seeded crew traits with hazard, blast, and rescue reactions.
 - Deterministic special enemies with distinct reactive attributes.
@@ -66,8 +67,10 @@ Tests exercise deterministic game creation and validate connected procedural ter
 - `V`: cycle crew combat stances
 - `I`: pass a firearm to adjacent crew or retrieve one
 - `O`: pass or swap a melee weapon with adjacent crew
+- `W`: pass or swap armor with adjacent crew
 - `G`: drop the captain's firearm; use `E` to pick up a ground firearm
 - `Q`: drop the captain's melee weapon; use `E` to pick up a ground weapon
+- `Z`: drop the captain's armor; use `E` to equip ground armor
 - `A`: order crew to attack the selected target
 - `E`: interact with the wreck or cave stairs
 - `X`: inspect the map; movement keys move the inspection cursor
