@@ -23,6 +23,7 @@ import {
   getInteractionLabel,
   getMeleeTransferLabel,
   getRunSummary,
+  getSupplyLoad,
   inspectMapPoint,
   interact,
   isIncapacitated,
@@ -129,8 +130,8 @@ const PICKUP_DETAILS = {
   mast: "replacement mast",
   canvas: "sailcloth",
   pitch: "pitch barrel",
-  ammo: "powder and shot",
-  salts: "smelling salts",
+  ammo: "a four-shot powder pouch, one supply slot",
+  salts: "smelling salts, one supply slot",
   flintlock: "flintlock firearm",
   pistol: "boarding pistol",
   cutlass: "cutlass, +1 melee damage",
@@ -478,10 +479,11 @@ function renderInterface(): void {
   const armor = player.armor === "leatherCoat"
     ? "Leather coat"
     : player.armor ? "Breastplate" : "No armor";
+  const supplyLoad = getSupplyLoad(state);
   captainStats.innerHTML = `
     <div class="health-line"><span>VIGOR</span><strong>${healthPips(player.hp, player.maxHp)}</strong><span>${player.hp}/${player.maxHp}</span></div>
     <div class="equipment-line"><span>${meleeWeapon}</span><span>${rangedWeapon}</span></div>
-    <div class="equipment-line"><span>${armor}</span><span>Shot: ${state.inventory.ammo} / Salts: ${state.inventory.salts}</span></div>
+    <div class="equipment-line"><span>${armor}</span><span>Shot: ${state.inventory.ammo} / Salts: ${state.inventory.salts} / Load: ${supplyLoad.used}/${supplyLoad.capacity}</span></div>
     <div class="seed-line">Chart: ${escapeHtml(state.seed)} / ${state.currentLevel === "surface" ? `Island / ${state.surfaceWeather.phase === "rain" ? "Heavy rain" : state.surfaceWeather.phase === "squallWarning" ? "Squall building" : "Fair"}` : "Cave / Sheltered underground"}</div>
   `;
   turnCount.textContent = `Turn ${state.turn}`;

@@ -55,6 +55,8 @@ const WRECK_RECOVERY_ATTENTION = 3;
 const WRECK_RECOVERY_AMOUNT = 2;
 const WRECK_RECOVERY_RADIUS = 2;
 const WRECK_SAFETY_RADIUS = 6;
+const AMMO_PER_POUCH = 4;
+const SUPPLY_SLOT_CAPACITY = 4;
 
 type SoundKind = "gunfire" | "slagBurst" | "command" | "distraction" | "fireSpread";
 
@@ -899,7 +901,14 @@ function isArmorPickup(type: PickupType): type is ArmorType {
   return type === "leatherCoat" || type === "breastplate";
 }
 
-function collectAtCaptain(state: GameState): void {
+export function getSupplyLoad(state: GameState): { used: number; capacity: number } {
+  return {
+    used: Math.ceil(state.inventory.ammo / AMMO_PER_POUCH) + state.inventory.salts,
+    capacity: SUPPLY_SLOT_CAPACITY,
+  };
+}
+
+function collectAtCaptain(state: GameState, reportBlocked = false): void {
   const player = captain(state);
   for (const pickup of state.pickups) {
     if (
@@ -909,8 +918,12 @@ function collectAtCaptain(state: GameState): void {
       pickup.y !== player.y
     ) continue;
     if (isRangedWeaponPickup(pickup.type) || isMeleeWeaponPickup(pickup.type) || isArmorPickup(pickup.type)) continue;
+    if ((pickup.type === "ammo" || pickup.type === "salts") && getSupplyLoad(state).used >= SUPPLY_SLOT_CAPACITY) {
+      if (reportBlocked) addMessage(state, `The supply rack is full; ${PICKUP_NAMES[pickup.type]} remains here.`);
+      continue;
+    }
     pickup.collected = true;
-    if (pickup.type === "ammo") state.inventory.ammo += 4;
+    if (pickup.type === "ammo") state.inventory.ammo += AMMO_PER_POUCH;
     else if (pickup.type === "salts") state.inventory.salts += 1;
     else {
       state.recoveredParts[pickup.type] = true;
@@ -1591,6 +1604,7 @@ export function moveCaptain(state: GameState, dx: number, dy: number): boolean {
       player.y = occupant.y;
       occupant.x = previous.x;
       occupant.y = previous.y;
+      collectAtCaptain(state, true);
       finishTurn(state);
       return true;
     }
@@ -1600,6 +1614,7 @@ export function moveCaptain(state: GameState, dx: number, dy: number): boolean {
       player.y = occupant.y;
       occupant.x = previous.x;
       occupant.y = previous.y;
+      collectAtCaptain(state, true);
       finishTurn(state);
       return true;
     }
@@ -1609,7 +1624,7 @@ export function moveCaptain(state: GameState, dx: number, dy: number): boolean {
 
   player.x = x;
   player.y = y;
-  collectAtCaptain(state);
+  collectAtCaptain(state, true);
   recruitNearby(state);
   finishTurn(state);
   return true;

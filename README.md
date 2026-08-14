@@ -15,6 +15,7 @@ The first playable prototype includes:
 - Bonegunners telegraph dry-powder openings by spending a turn reloading after each shot.
 - Leather and breastplate armor with physical damage reduction and ironclad enemy drops.
 - Armed crew fire and reload from party shot, with gunners receiving better accuracy.
+- Four shared supply slots for powder pouches and smelling salts; repair cargo and equipped gear are exempt.
 - Seeded crew traits with hazard, blast, and rescue reactions.
 - Deterministic special enemies with distinct reactive attributes.
 - Spatial noise and terrain-aware enemy investigation.

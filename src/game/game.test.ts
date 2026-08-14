@@ -18,6 +18,7 @@ import {
   getMeleeTransferLabel,
   getInteractionLabel,
   getRunSummary,
+  getSupplyLoad,
   inspectMapPoint,
   interact,
   isAttributeCompatible,
@@ -347,6 +348,66 @@ describe("game simulation", () => {
     expect(restored.levels.cave.tiles).toHaveLength(state.levels.cave.width * state.levels.cave.height);
   });
 
+  it("uses four shared slots for powder pouches and smelling salts", () => {
+    const privateer = createGame(captain, "privateer-supply-load");
+    const surgeon = createGame({ ...captain, background: "surgeon" }, "surgeon-supply-load");
+
+    expect(getSupplyLoad(privateer)).toEqual({ used: 3, capacity: 4 });
+    expect(getSupplyLoad(surgeon)).toEqual({ used: 4, capacity: 4 });
+
+    privateer.inventory = { ammo: 5, salts: 2 };
+    expect(getSupplyLoad(privateer)).toEqual({ used: 4, capacity: 4 });
+  });
+
+  it("leaves supply caches on the ground until a slot becomes free", () => {
+    const state = createGame(captain, "full-supply-rack");
+    const player = getCaptain(state);
+    const ammo = state.pickups.find((pickup) => pickup.level === "surface" && pickup.type === "ammo");
+    expect(ammo).toBeDefined();
+    if (!ammo) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    const dx = player.x < state.levels.surface.width / 2 ? 1 : -1;
+    const destination = state.levels.surface.tiles[tileIndex(player.x + dx, player.y, state.levels.surface.width)];
+    expect(destination).toBeDefined();
+    if (!destination) return;
+    destination.terrain = "grass";
+    ammo.x = player.x + dx;
+    ammo.y = player.y;
+    state.inventory = { ammo: 12, salts: 1 };
+
+    expect(moveCaptain(state, dx, 0)).toBe(true);
+
+    expect(ammo.collected).toBe(false);
+    expect(state.inventory.ammo).toBe(12);
+    expect(state.messages.some((message) => message.includes("supply rack is full"))).toBe(true);
+
+    state.inventory.ammo = 8;
+    waitTurn(state);
+
+    expect(ammo.collected).toBe(true);
+    expect(state.inventory.ammo).toBe(12);
+    expect(getSupplyLoad(state)).toEqual({ used: 4, capacity: 4 });
+  });
+
+  it("refills a freed supply slot from a cache underfoot", () => {
+    const state = createGame(captain, "replace-used-salts");
+    const player = getCaptain(state);
+    const salts = state.pickups.find((pickup) => pickup.level === "surface" && pickup.type === "salts");
+    expect(salts).toBeDefined();
+    if (!salts) return;
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    salts.x = player.x;
+    salts.y = player.y;
+    state.inventory = { ammo: 8, salts: 2 };
+    player.hp -= 4;
+
+    expect(useSmellingSalts(state)).toBe(true);
+
+    expect(salts.collected).toBe(true);
+    expect(state.inventory.salts).toBe(2);
+    expect(getSupplyLoad(state)).toEqual({ used: 4, capacity: 4 });
+  });
+
   it("does not produce a run summary while play is active", () => {
     expect(getRunSummary(createGame(captain, "unfinished-voyage"))).toBeNull();
   });
@@ -381,12 +442,14 @@ describe("game simulation", () => {
     expect(mast).toBeDefined();
     if (!mast) return;
     state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    state.inventory = { ammo: 12, salts: 1 };
     player.x = mast.x;
     player.y = mast.y;
 
     waitTurn(state);
 
     expect(mast.collected).toBe(true);
+    expect(getSupplyLoad(state)).toEqual({ used: 4, capacity: 4 });
     expect(state.recoveredParts.mast).toBe(true);
     expect(state.threat).toBe(7);
     expect(state.repairs.mast).toBe(false);
