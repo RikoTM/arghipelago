@@ -182,10 +182,11 @@ function loadSave(): GameState | null {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<GameState>;
-    // Earlier version-19 saves used a captain-relative rally with no stored point.
+    // Earlier version-19 saves predate fixed rally points and actor burning.
     if (Array.isArray(parsed.actors)) {
       const savedCaptain = parsed.actors.find((actor) => actor.id === parsed.captainId);
       for (const actor of parsed.actors) {
+        if (actor.burningTurns === undefined) actor.burningTurns = 0;
         if (actor.crewAssignment && actor.crewAssignment.targetPosition === undefined) {
           actor.crewAssignment.targetPosition = actor.crewAssignment.order === "rally" && savedCaptain
             ? { x: savedCaptain.x, y: savedCaptain.y }
@@ -265,7 +266,10 @@ function loadSave(): GameState | null {
         return (
           !Number.isInteger(actor.incapacitatedTurns) ||
           !Number.isInteger(actor.wetUntilTurn) ||
+          !Number.isInteger(actor.burningTurns) ||
           actor.wetUntilTurn < 0 ||
+          actor.burningTurns < 0 ||
+          actor.burningTurns > 2 ||
           actor.incapacitatedTurns < 0 ||
           actor.incapacitatedTurns > 10 ||
           (actor.incapacitatedTurns > 0 && (actor.kind !== "crew" || !actor.alive || actor.hp !== 0)) ||
@@ -400,6 +404,7 @@ function inspectionDescription(result: MapInspection): string {
       const attribute = actor.enemyAttribute ? `, ${ENEMY_ATTRIBUTE_DETAILS[actor.enemyAttribute]}` : "";
       details.push(`${actor.name}, ${getFaction(actor)}, ${behavior}, ${actor.hp}/${actor.maxHp} vigor, ${tactic}${firearm}${attribute}`);
     }
+    if (actor.burningTurns > 0) details.push(`${actor.name} is burning for ${actor.burningTurns} more turn${actor.burningTurns === 1 ? "" : "s"}`);
     if (actor.kind !== "enemy") {
       const melee = actor.meleeWeapon === "boardingAxe" ? "boarding axe" : actor.meleeWeapon ?? "unarmed";
       const ranged = actor.rangedWeapon
@@ -480,8 +485,11 @@ function renderInterface(): void {
     ? "Leather coat"
     : player.armor ? "Breastplate" : "No armor";
   const supplyLoad = getSupplyLoad(state);
+  const captainConditions = [isWet(state, player) ? "Wet" : null, player.burningTurns > 0 ? `Burning ${player.burningTurns}` : null]
+    .filter(Boolean)
+    .join(" / ");
   captainStats.innerHTML = `
-    <div class="health-line"><span>VIGOR</span><strong>${healthPips(player.hp, player.maxHp)}</strong><span>${player.hp}/${player.maxHp}</span></div>
+    <div class="health-line"><span>VIGOR</span><strong>${healthPips(player.hp, player.maxHp)}</strong><span>${player.hp}/${player.maxHp}${captainConditions ? ` / ${captainConditions}` : ""}</span></div>
     <div class="equipment-line"><span>${meleeWeapon}</span><span>${rangedWeapon}</span></div>
     <div class="equipment-line"><span>${armor}</span><span>Shot: ${state.inventory.ammo} / Salts: ${state.inventory.salts} / Load: ${supplyLoad.used}/${supplyLoad.capacity}</span></div>
     <div class="seed-line">Chart: ${escapeHtml(state.seed)} / ${state.currentLevel === "surface" ? `Island / ${state.surfaceWeather.phase === "rain" ? "Heavy rain" : state.surfaceWeather.phase === "squallWarning" ? "Squall building" : "Fair"}` : "Cave / Sheltered underground"}</div>
@@ -529,7 +537,7 @@ function renderInterface(): void {
           (member) => {
             const status = isIncapacitated(member)
               ? `Incapacitated: ${member.incapacitatedTurns} turns`
-              : `${member.hp}/${member.maxHp} vigor${isWet(state as GameState, member) ? " / Wet" : ""}`;
+              : `${member.hp}/${member.maxHp} vigor${isWet(state as GameState, member) ? " / Wet" : ""}${member.burningTurns > 0 ? ` / Burning ${member.burningTurns}` : ""}`;
             const trait = member.crewTrait ? CREW_TRAIT_DETAILS[member.crewTrait].split(":")[0] : "Unremarkable";
             const reaction = member.crewReaction === "brace" ? " / Bracing" : "";
             const armor = member.armor === "leatherCoat" ? "Leather coat" : member.armor ? "Breastplate" : "No armor";

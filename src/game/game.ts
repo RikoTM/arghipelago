@@ -41,6 +41,7 @@ const PURSUIT_MEMORY = 10;
 const FIRE_TURNS = 3;
 const FIRE_SMOKE_TURNS = 5;
 const FIRE_DAMAGE = 2;
+const BURNING_TURNS = 2;
 const MUZZLE_SMOKE_TURNS = 3;
 const RAIN_WET_TURNS = 2;
 const DOUSE_WET_TURNS = 4;
@@ -407,6 +408,7 @@ function makeEnemy(id: number, type: EnemyType, point: Point, rng: Rng, level: L
     alive: true,
     incapacitatedTurns: 0,
     wetUntilTurn: 0,
+    burningTurns: 0,
     enemyAwareness: null,
   };
 }
@@ -502,6 +504,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       alive: true,
       incapacitatedTurns: 0,
       wetUntilTurn: 0,
+      burningTurns: 0,
       enemyAwareness: null,
     },
   ];
@@ -535,6 +538,7 @@ export function createGame(config: CaptainConfig, seed: string): GameState {
       alive: true,
       incapacitatedTurns: 0,
       wetUntilTurn: 0,
+      burningTurns: 0,
       enemyAwareness: null,
     });
     nextId += 1;
@@ -695,6 +699,10 @@ function applyRain(state: GameState): void {
     const terrain = surface.tiles[tileIndex(actor.x, actor.y, surface.width)]?.terrain;
     if (terrain && RAIN_EXPOSED_TERRAIN.includes(terrain)) {
       actor.wetUntilTurn = Math.max(actor.wetUntilTurn, state.turn + RAIN_WET_TURNS);
+      if (actor.burningTurns > 0) {
+        actor.burningTurns = 0;
+        addMessage(state, `The heavy rain extinguishes ${actor.name}.`);
+      }
     }
   }
   state.environment.surface = [];
@@ -784,6 +792,7 @@ function damageActor(
 
   target.alive = false;
   target.hp = 0;
+  target.burningTurns = 0;
   if (target.kind === "captain") {
     if (state.inventory.salts > 0) {
       state.inventory.salts -= 1;
@@ -1390,8 +1399,13 @@ function resolveEnvironment(state: GameState, sounds: SoundEvent[]): void {
           actor.x === effect.x &&
           actor.y === effect.y
         ) {
-          const damage = isWet(state, actor) ? FIRE_DAMAGE - 1 : FIRE_DAMAGE;
+          const wet = isWet(state, actor);
+          const damage = wet ? FIRE_DAMAGE - 1 : FIRE_DAMAGE;
           if (damage > 0) damageActor(state, actor, damage, { actor: null, label: "The fire" }, sounds);
+          if (!wet && canAct(actor)) {
+            if (actor.burningTurns === 0) addMessage(state, `${actor.name} catches fire.`);
+            actor.burningTurns = Math.max(actor.burningTurns, BURNING_TURNS);
+          }
         }
       }
       effect.fireTurns -= 1;
@@ -1409,6 +1423,19 @@ function resolveEnvironment(state: GameState, sounds: SoundEvent[]): void {
     sounds.push(makeEnvironmentalSound("fireSpread", level, point));
   }
   state.environment[level] = effects.filter((effect) => effect.fireTurns > 0 || effect.smokeTurns > 0);
+}
+
+function resolveBurning(state: GameState, sounds: SoundEvent[]): void {
+  for (const actor of state.actors) {
+    if (!canAct(actor) || actor.level !== state.currentLevel || actor.burningTurns <= 0) continue;
+    if (isWet(state, actor)) {
+      actor.burningTurns = 0;
+      addMessage(state, `${actor.name}'s flames sputter out.`);
+      continue;
+    }
+    actor.burningTurns -= 1;
+    damageActor(state, actor, 1, { actor: null, label: "The lingering fire" }, sounds);
+  }
 }
 
 function runEnemyTurns(state: GameState, rng: Rng, sounds: SoundEvent[]): void {
@@ -1544,6 +1571,8 @@ function finishTurn(state: GameState, sounds: SoundEvent[] = []): void {
   runCrewTurns(state, rng, sounds);
   resolveSounds(state, sounds);
   runEnemyTurns(state, rng, sounds);
+  resolveSounds(state, sounds);
+  resolveBurning(state, sounds);
   resolveSounds(state, sounds);
   resolveEnvironment(state, sounds);
   resolveSounds(state, sounds);
@@ -2339,6 +2368,7 @@ function isAtSurf(state: GameState): boolean {
 
 function douseParty(state: GameState, source: "spring" | "surf"): void {
   const player = captain(state);
+  let extinguished = 0;
   for (const actor of state.actors) {
     if (
       actor.alive &&
@@ -2347,6 +2377,8 @@ function douseParty(state: GameState, source: "spring" | "surf"): void {
       distance(player, actor) <= 1
     ) {
       actor.wetUntilTurn = Math.max(actor.wetUntilTurn, state.turn + DOUSE_WET_TURNS + 1);
+      if (actor.burningTurns > 0) extinguished += 1;
+      actor.burningTurns = 0;
     }
   }
   addMessage(
@@ -2355,6 +2387,9 @@ function douseParty(state: GameState, source: "spring" | "surf"): void {
       ? "The party washes in the freshwater spring. Fire seems less concerning; powder seems more so."
       : "The party douses itself in the surf. Fire seems less concerning; powder seems more so.",
   );
+  if (extinguished > 0) {
+    addMessage(state, `The water extinguishes ${extinguished} burning party member${extinguished === 1 ? "" : "s"}.`);
+  }
   finishTurn(state);
 }
 

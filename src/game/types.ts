@@ -96,6 +96,7 @@ export interface Actor extends Point {
   alive: boolean;
   incapacitatedTurns: number;
   wetUntilTurn: number;
+  burningTurns: number;
   enemyAwareness: EnemyAwareness | null;
 }
 

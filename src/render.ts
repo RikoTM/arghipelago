@@ -467,6 +467,23 @@ function drawEnvironment(context: CanvasRenderingContext2D, fireTurns: number, s
   context.restore();
 }
 
+function drawBurningMarker(context: CanvasRenderingContext2D, x: number, y: number): void {
+  context.save();
+  context.translate(x + 20, y + 18);
+  context.fillStyle = "#8c3f36";
+  context.strokeStyle = INK;
+  context.lineWidth = 1;
+  context.beginPath();
+  context.moveTo(1, 12);
+  context.quadraticCurveTo(-1, 6, 4, 3);
+  context.quadraticCurveTo(4, 8, 8, 5);
+  context.quadraticCurveTo(13, 9, 10, 14);
+  context.closePath();
+  context.fill();
+  context.stroke();
+  context.restore();
+}
+
 export function createRenderer(canvas: HTMLCanvasElement): Renderer {
   const maybeContext = canvas.getContext("2d");
   if (!maybeContext) throw new Error("Canvas rendering is unavailable.");
@@ -569,6 +586,7 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
         );
       }
       context.drawImage(sprite(actorSprite(actor), state.captainConfig.coat), screenX, screenY);
+      if (actor.burningTurns > 0) drawBurningMarker(context, screenX, screenY);
       if (actor.kind === "enemy" && actor.enemyAttribute) {
         context.fillStyle = PAPER;
         context.strokeStyle = INK;

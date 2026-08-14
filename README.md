@@ -21,6 +21,7 @@ The first playable prototype includes:
 - Spatial noise and terrain-aware enemy investigation.
 - Terrain cover and faction-symmetric melee flanking.
 - Deterministic squalls, rain, wet powder, and coastal dousing.
+- Persistent actor burning that rain, freshwater, or surf can extinguish.
 - A procedurally generated cave containing a required repair objective.
 - Danger that escalates with time, waiting, noise, and repair progress.
 - A shipwreck refuge where a nearby, conscious party can recover after clearing local threats.

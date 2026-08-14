@@ -2917,7 +2917,66 @@ describe("game simulation", () => {
     waitTurn(state);
 
     expect(player.hp).toBe(playerHealth - 2);
+    expect(player.burningTurns).toBe(2);
     expect(slag.hp).toBe(slagHealth);
+    expect(slag.burningTurns).toBe(0);
+  });
+
+  it("keeps dry actors burning after they leave a fire tile", () => {
+    const state = createGame(captain, "persistent-burning");
+    const player = getCaptain(state);
+    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+    player.x = 20;
+    player.y = 20;
+    state.environment.surface = [{ x: 20, y: 20, fireTurns: 3, smokeTurns: 5 }];
+    const startingHealth = player.hp;
+
+    waitTurn(state);
+
+    expect(player.hp).toBe(startingHealth - 2);
+    expect(player.burningTurns).toBe(2);
+    const restored = JSON.parse(JSON.stringify(state)) as typeof state;
+    expect(getCaptain(restored).burningTurns).toBe(2);
+
+    expect(moveCaptain(state, 1, 0)).toBe(true);
+    expect(player.hp).toBe(startingHealth - 3);
+    expect(player.burningTurns).toBe(1);
+
+    waitTurn(state);
+    expect(player.hp).toBe(startingHealth - 4);
+    expect(player.burningTurns).toBe(0);
+  });
+
+  it("resolves lethal burning deterministically", () => {
+    const first = createGame(captain, "deterministic-burning-death");
+    const second = createGame(captain, "deterministic-burning-death");
+    for (const state of [first, second]) {
+      const player = getCaptain(state);
+      const enemy = state.actors.find(
+        (actor) => actor.kind === "enemy" && actor.level === "surface" && actor.enemyType === "skeleton",
+      );
+      expect(enemy).toBeDefined();
+      if (!enemy) continue;
+      state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== enemy.id).forEach((actor) => {
+        actor.alive = false;
+      });
+      for (const tile of state.levels.surface.tiles) tile.terrain = "grass";
+      player.x = 20;
+      player.y = 20;
+      enemy.x = 30;
+      enemy.y = 20;
+      enemy.hp = 1;
+      enemy.burningTurns = 1;
+      enemy.enemyAwareness = null;
+    }
+
+    waitTurn(first);
+    waitTurn(second);
+
+    expect(first).toEqual(second);
+    expect(first.actors.find((actor) => actor.burningTurns > 0)).toBeUndefined();
+    expect(first.actors.find((actor) => actor.enemyType === "skeleton" && actor.x === 30 && actor.y === 20)?.alive).toBe(false);
   });
 
   it("uses smoke to block sight and conceal distant occupants", () => {
@@ -2943,11 +3002,16 @@ describe("game simulation", () => {
 
   it("pauses environmental effects on inactive levels", () => {
     const state = createGame(captain, "paused-cave-fire");
-    state.actors.filter((actor) => actor.kind === "enemy").forEach((actor) => { actor.alive = false; });
+    const caveEnemy = state.actors.find((actor) => actor.kind === "enemy" && actor.level === "cave");
+    expect(caveEnemy).toBeDefined();
+    if (!caveEnemy) return;
+    state.actors.filter((actor) => actor.kind === "enemy" && actor.id !== caveEnemy.id).forEach((actor) => { actor.alive = false; });
+    caveEnemy.burningTurns = 2;
     state.environment.cave = [{ x: state.caveExit.x, y: state.caveExit.y, fireTurns: 2, smokeTurns: 5 }];
 
     waitTurn(state);
     expect(state.environment.cave[0]).toMatchObject({ fireTurns: 2, smokeTurns: 5 });
+    expect(caveEnemy.burningTurns).toBe(2);
   });
 
   it("warns before deterministic rain and does not perturb simulation RNG", () => {
@@ -2995,6 +3059,11 @@ describe("game simulation", () => {
     const shelter = state.levels.surface.tiles[tileIndex(22, 20, state.levels.surface.width)];
     if (shelter) shelter.terrain = "jungle";
     state.surfaceWeather = { phase: "rain", transitionTurn: 100, cycle: 0 };
+    player.burningTurns = 2;
+    exposed.burningTurns = 2;
+    sheltered.burningTurns = 2;
+    caveEnemy.burningTurns = 2;
+    const shelteredHealth = sheltered.hp;
 
     waitTurn(state);
 
@@ -3002,6 +3071,11 @@ describe("game simulation", () => {
     expect(isWet(state, exposed)).toBe(true);
     expect(isWet(state, sheltered)).toBe(false);
     expect(isWet(state, caveEnemy)).toBe(false);
+    expect(player.burningTurns).toBe(0);
+    expect(exposed.burningTurns).toBe(0);
+    expect(sheltered.burningTurns).toBe(1);
+    expect(sheltered.hp).toBe(shelteredHealth - 1);
+    expect(caveEnemy.burningTurns).toBe(2);
   });
 
   it("extinguishes surface fire and smoke during rain while cave hazards continue", () => {
@@ -3057,12 +3131,21 @@ describe("game simulation", () => {
     crew.kind = "crew";
     crew.x = 21;
     crew.y = 20;
+    player.burningTurns = 2;
+    crew.burningTurns = 2;
+    const playerHealth = player.hp;
+    const crewHealth = crew.hp;
 
     expect(getInteractionLabel(state)).toBe("Douse in surf");
     expect(interact(state)).toBe(true);
     expect(state.turn).toBe(1);
     expect(isWet(state, player)).toBe(true);
     expect(isWet(state, crew)).toBe(true);
+    expect(player.burningTurns).toBe(0);
+    expect(crew.burningTurns).toBe(0);
+    expect(player.hp).toBe(playerHealth);
+    expect(crew.hp).toBe(crewHealth);
+    expect(state.messages.some((message) => message.includes("extinguishes 2 burning party members"))).toBe(true);
   });
 
   it("lets the nearby party wash at the freshwater spring", () => {
@@ -3123,6 +3206,8 @@ describe("game simulation", () => {
     waitTurn(wet);
 
     expect(getCaptain(wet).hp).toBe(getCaptain(dry).hp + 1);
+    expect(getCaptain(dry).burningTurns).toBe(2);
+    expect(getCaptain(wet).burningTurns).toBe(0);
   });
 
   it("transitions between the surface and cave without activating enemies on the other level", () => {
