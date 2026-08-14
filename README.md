@@ -65,12 +65,7 @@ Tests exercise deterministic game creation and validate connected procedural ter
 - `T`: enter inspection mode or throw a stone at the selected visible tile
 - `C`: cycle crew orders
 - `V`: cycle crew combat stances
-- `I`: pass a firearm to adjacent crew or retrieve one
-- `O`: pass or swap a melee weapon with adjacent crew
-- `W`: pass or swap armor with adjacent crew
-- `G`: drop the captain's firearm; use `E` to pick up a ground firearm
-- `Q`: drop the captain's melee weapon; use `E` to pick up a ground weapon
-- `Z`: drop the captain's armor; use `E` to equip ground armor
+- `I`: open the keyboard-accessible equipment menu for adjacent trades and drops
 - `A`: order crew to attack the selected target
 - `E`: interact with the wreck or cave stairs
 - `X`: inspect the map; movement keys move the inspection cursor

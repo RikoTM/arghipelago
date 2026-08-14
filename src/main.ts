@@ -96,6 +96,7 @@ const transferArmorButton = requireElement<HTMLButtonElement>("#transfer-armor-b
 const dropFirearmButton = requireElement<HTMLButtonElement>("#drop-firearm-button");
 const dropMeleeButton = requireElement<HTMLButtonElement>("#drop-melee-button");
 const dropArmorButton = requireElement<HTMLButtonElement>("#drop-armor-button");
+const equipmentDialog = requireElement<HTMLDialogElement>("#equipment-dialog");
 const contextButton = requireElement<HTMLButtonElement>("#context-button");
 const controlsHelp = requireElement<HTMLDetailsElement>(".controls-help");
 const inspectionReadout = requireElement<HTMLElement>("#inspection-readout");
@@ -498,13 +499,19 @@ function renderInterface(): void {
   pitchShotButton.textContent = state.recoveredParts.pitch && target ? `Burn ${target.name}` : "Pitch shot";
   pitchShotButton.disabled = !state.recoveredParts.pitch;
   transferFirearmButton.textContent = getFirearmTransferLabel(state);
+  transferFirearmButton.disabled = transferFirearmButton.textContent === "No firearm trade";
   transferMeleeButton.textContent = getMeleeTransferLabel(state);
+  transferMeleeButton.disabled = transferMeleeButton.textContent === "No blade trade";
   transferArmorButton.textContent = getArmorTransferLabel(state);
+  transferArmorButton.disabled = transferArmorButton.textContent === "No armor trade";
   dropFirearmButton.textContent = player.rangedWeapon ? `Drop ${player.rangedWeapon}` : "No firearm to drop";
+  dropFirearmButton.disabled = player.rangedWeapon === null;
   const meleeLabel = player.meleeWeapon === "boardingAxe" ? "boarding axe" : player.meleeWeapon;
   dropMeleeButton.textContent = meleeLabel ? `Drop ${meleeLabel}` : "No blade to drop";
+  dropMeleeButton.disabled = player.meleeWeapon === null;
   const armorLabel = player.armor === "leatherCoat" ? "leather coat" : player.armor;
   dropArmorButton.textContent = armorLabel ? `Drop ${armorLabel}` : "No armor to drop";
+  dropArmorButton.disabled = player.armor === null;
   const onStairs =
     (state.currentLevel === "surface" && player.x === state.caveEntrance.x && player.y === state.caveEntrance.y) ||
     (state.currentLevel === "cave" && player.x === state.caveExit.x && player.y === state.caveExit.y);
@@ -542,7 +549,19 @@ function commitAction(action: () => void): void {
   renderInterface();
 }
 
+function closeEquipment(): void {
+  if (equipmentDialog.open) equipmentDialog.close();
+  if (state && !gameScreen.hidden) canvas.focus();
+}
+
+function openEquipment(): void {
+  if (!state || state.phase !== "playing" || equipmentDialog.open) return;
+  renderInterface();
+  equipmentDialog.showModal();
+}
+
 function showGame(game: GameState): void {
+  if (equipmentDialog.open) equipmentDialog.close();
   state = game;
   inspection = null;
   setupScreen.hidden = true;
@@ -553,6 +572,7 @@ function showGame(game: GameState): void {
 }
 
 function showSetup(): void {
+  if (equipmentDialog.open) equipmentDialog.close();
   state = null;
   inspection = null;
   gameScreen.hidden = true;
@@ -565,6 +585,10 @@ function showSetup(): void {
 
 function handleAction(action: string): void {
   if (!state) return;
+  if (action === "equipment") {
+    openEquipment();
+    return;
+  }
   if (action === "interact" && inspection?.mode === "locked") {
     endInspection();
     return;
@@ -646,7 +670,37 @@ function newCaptain(): void {
 retryRunButton.addEventListener("click", retryRun);
 newCaptainButton.addEventListener("click", newCaptain);
 
+equipmentDialog.addEventListener("click", (event) => {
+  if (event.target === equipmentDialog) {
+    closeEquipment();
+    return;
+  }
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
+  if (!button) return;
+  if (button.dataset.equipmentClose !== undefined) {
+    closeEquipment();
+    return;
+  }
+  const action = button.dataset.equipmentAction;
+  if (!action || !state) return;
+  const previousTurn = state.turn;
+  handleAction(action);
+  if (!state || state.phase !== "playing" || state.turn > previousTurn) closeEquipment();
+});
+
+equipmentDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeEquipment();
+});
+
 document.addEventListener("keydown", (event) => {
+  if (equipmentDialog.open) {
+    if (event.key === "Escape" || event.key.toLowerCase() === "i") {
+      event.preventDefault();
+      closeEquipment();
+    }
+    return;
+  }
   if (!state || gameScreen.hidden) return;
   if (state.phase !== "playing") {
     if (event.key === "Enter") {
@@ -737,12 +791,7 @@ document.addEventListener("keydown", (event) => {
   else if (event.key.toLowerCase() === "a") handleAction("crew-attack");
   else if (event.key.toLowerCase() === "c") handleAction("order");
   else if (event.key.toLowerCase() === "v") handleAction("stance");
-  else if (event.key.toLowerCase() === "i") handleAction("transfer-firearm");
-  else if (event.key.toLowerCase() === "o") handleAction("transfer-melee");
-  else if (event.key.toLowerCase() === "w") handleAction("transfer-armor");
-  else if (event.key.toLowerCase() === "g") handleAction("drop-firearm");
-  else if (event.key.toLowerCase() === "q") handleAction("drop-melee");
-  else if (event.key.toLowerCase() === "z") handleAction("drop-armor");
+  else if (event.key.toLowerCase() === "i") handleAction("equipment");
   else if (event.key === "Tab") {
     event.preventDefault();
     handleAction("target-next");

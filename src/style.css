@@ -523,6 +523,78 @@ kbd {
   text-decoration: underline;
 }
 
+.equipment-dialog {
+  width: min(620px, calc(100% - 28px));
+  max-height: calc(100vh - 28px);
+  padding: 0;
+  border: 2px solid #756b57;
+  color: var(--ink);
+  background: var(--paper);
+  box-shadow: 0 24px 70px #000b;
+}
+
+.equipment-dialog::backdrop {
+  background: rgb(10 16 14 / 78%);
+}
+
+.equipment-sheet {
+  padding: clamp(20px, 5vw, 36px);
+  background:
+    radial-gradient(circle at 18% 20%, rgb(81 64 40 / 9%) 0 1px, transparent 2px),
+    repeating-linear-gradient(8deg, transparent 0 14px, rgb(45 41 31 / 3%) 15px, transparent 16px),
+    var(--paper);
+}
+
+.equipment-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #756b57;
+}
+
+.equipment-heading h2 {
+  margin: 2px 0 0;
+  font-family: "Pirata One", Georgia, serif;
+  font-size: 2.4rem;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.equipment-sheet > p {
+  margin: 14px 0;
+  line-height: 1.4;
+}
+
+.equipment-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+}
+
+.equipment-actions button,
+.equipment-close {
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid #766c57;
+  color: var(--ink);
+  background: rgb(237 224 190 / 62%);
+  font-family: "Special Elite", monospace;
+  font-size: 0.78rem;
+}
+
+.equipment-close {
+  min-height: 36px;
+  color: #625b4d;
+  background: transparent;
+}
+
+.equipment-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
 .touch-controls {
   display: none;
   grid-template-columns: auto 1fr;
@@ -680,6 +752,10 @@ kbd {
 
   .action-pad {
     gap: 5px;
+  }
+
+  .equipment-actions {
+    grid-template-columns: 1fr;
   }
 
   .ship-log {

@@ -121,12 +121,7 @@
               <button id="context-button" data-action="interact">Inspect map</button>
               <button data-action="order">Crew order</button>
               <button data-action="stance">Crew stance</button>
-              <button id="transfer-firearm-button" data-action="transfer-firearm">Trade firearm</button>
-              <button id="transfer-melee-button" data-action="transfer-melee">Trade blade</button>
-              <button id="transfer-armor-button" data-action="transfer-armor">Trade armor</button>
-              <button id="drop-firearm-button" data-action="drop-firearm">Drop firearm</button>
-              <button id="drop-melee-button" data-action="drop-melee">Drop blade</button>
-              <button id="drop-armor-button" data-action="drop-armor">Drop armor</button>
+              <button data-action="equipment">Equipment</button>
               <button id="crew-attack-button" data-action="crew-attack">Attack target</button>
               <button data-action="salts">Use salts</button>
               <button data-action="distract">Make noise</button>
@@ -170,13 +165,34 @@
             <summary>Controls <kbd>?</kbd></summary>
             <p><kbd>Arrows</kbd> / <kbd>HJKL</kbd> / keypad move; diagonals use <kbd>YUBN</kbd> or keypad corners.</p>
             <p><kbd>.</kbd> waits, <kbd>F</kbd> aims, <kbd>R</kbd> reloads, <kbd>S</kbd> uses salts, <kbd>D</kbd> makes noise, <kbd>P</kbd> fires pitch, <kbd>E</kbd> interacts.</p>
-            <p><kbd>X</kbd> inspects. <kbd>T</kbd> throws stones. <kbd>Tab</kbd> targets. <kbd>C</kbd>/<kbd>V</kbd> command crew. <kbd>I</kbd>/<kbd>O</kbd>/<kbd>W</kbd> trade firearm/blade/armor. <kbd>G</kbd>/<kbd>Q</kbd>/<kbd>Z</kbd> drop them.</p>
+            <p><kbd>X</kbd> inspects. <kbd>T</kbd> throws stones. <kbd>Tab</kbd> targets; <kbd>Enter</kbd> fires. <kbd>C</kbd>/<kbd>V</kbd> command crew; <kbd>A</kbd> orders an attack. <kbd>I</kbd> opens equipment.</p>
             <p>Ground equipment uses <kbd>E</kbd>. Leather blocks melee damage; breastplates also resist shot.</p>
           </details>
 
           <button id="new-run-button" class="text-button" type="button">Abandon this entirely</button>
         </aside>
       </section>
+
+      <dialog id="equipment-dialog" class="equipment-dialog" aria-labelledby="equipment-title">
+        <section class="equipment-sheet">
+          <div class="equipment-heading">
+            <div>
+              <p class="chapter">Quartermaster's slate</p>
+              <h2 id="equipment-title">Equipment</h2>
+            </div>
+            <button type="button" class="equipment-close" data-equipment-close aria-label="Close equipment">Close</button>
+          </div>
+          <p>Trade with an adjacent crewmate or leave equipped gear on the current tile. Each successful action takes one turn.</p>
+          <div class="equipment-actions">
+            <button id="transfer-firearm-button" type="button" data-equipment-action="transfer-firearm">Trade firearm</button>
+            <button id="transfer-melee-button" type="button" data-equipment-action="transfer-melee">Trade blade</button>
+            <button id="transfer-armor-button" type="button" data-equipment-action="transfer-armor">Trade armor</button>
+            <button id="drop-firearm-button" type="button" data-equipment-action="drop-firearm">Drop firearm</button>
+            <button id="drop-melee-button" type="button" data-equipment-action="drop-melee">Drop blade</button>
+            <button id="drop-armor-button" type="button" data-equipment-action="drop-armor">Drop armor</button>
+          </div>
+        </section>
+      </dialog>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
